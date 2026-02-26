@@ -68,7 +68,7 @@ canvas{display:block}
 <div class=st>SURVIVE THE FOREST</div>
 <div style="margin-bottom:16px"><input id=seedIn type=text placeholder="SEED (blank=random)" style="background:rgba(20,25,20,.9);border:1px solid #543;color:#c96;padding:8px 16px;font:13px monospace;text-align:center;width:260px;letter-spacing:1px;outline:none" spellcheck=false></div>
 <button class=btn onclick=start()>ENTER</button>
-<div class=ci>WASD Move | Mouse Aim+Shoot | 1-5 Weapons<br>G Grenade | E Pickup | R Reload | SHIFT Sprint<br>F Perform Ritual at Temples | M Place Waypoint</div>
+<div class=ci>WASD Move | Mouse Aim+Shoot | 1-5 Weapons<br>G Grenade | E Pickup | R Reload | SHIFT Sprint<br>F Perform Ritual | M Waypoint<br>Find 5 Wayfinder Fragments to reveal temples</div>
 </div>
 <div id=D>
 <div class=tt style="color:#a22">DEAD</div>
@@ -88,17 +88,53 @@ function mkRng(s){return()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s)
 let sr; // seeded random
 function seedFromStr(str){let h=0;for(let i=0;i<str.length;i++){h=Math.imul(31,h)+str.charCodeAt(i)|0;}return h;}
 
-// Map boundary: irregular polygon generated from seed
-let mapPoly=[],mapCx,mapCy,mapR; // center and approx radius
+// Map boundary: concentric zones that unlock. Zone 0=start, 1-3=expansions
+let mapPoly=[],mapCx,mapCy,mapR;
+let zonePolys=[]; // array of 4 polygon arrays (zone 0-3)
+let currentZone=0; // 0=initial, max=3
 function genMapShape(rng){
 const cx=25000,cy=25000;mapCx=cx;mapCy=cy;
-const n=12+Math.floor(rng()*8); // 12-19 vertices
-const baseR=18000+rng()*8000; mapR=baseR;
-mapPoly=[];
+zonePolys=[];
+const baseRadii=[3000,7000,13000,22000]; // expanding zone radii
+for(let z=0;z<4;z++){
+const n=10+Math.floor(rng()*6);
+const bR=baseRadii[z];
+const poly=[];
 for(let i=0;i<n;i++){
 const a=i/n*PI2;
-const r=baseR*(.6+rng()*.8); // 60-140% of base
-mapPoly.push({x:cx+Math.cos(a)*r,y:cy+Math.sin(a)*r});}
+const r=bR*(.75+rng()*.5);
+poly.push({x:cx+Math.cos(a)*r,y:cy+Math.sin(a)*r});}
+zonePolys.push(poly);}
+currentZone=0;
+mapPoly=zonePolys[0];mapR=baseRadii[0];
+}
+function expandMap(zone){
+if(zone>3)zone=3;
+currentZone=zone;
+mapPoly=zonePolys[zone];
+mapR=[3000,7000,13000,22000][zone];
+// Add new content for the expanded area
+addZoneContent(zone);
+}
+function addZoneContent(zone){
+const r=mkRng(seedFromStr((G.seed||'')+'zone'+zone));
+const count=[0,120,180,250][zone];
+for(let i=0;i<count;i++){const p=randInMap(r);
+if(Math.hypot(p.x-mapCx,p.y-mapCy)<[0,2800,6500,12500][zone])continue;
+const w=40+r()*100,h=40+r()*80;
+G.ob.push({x:p.x,y:p.y,w,h,tp:r()<.5?0:1});}
+for(let g=0;g<[0,30,50,80][zone];g++){const cp=randInMap(r);
+if(Math.hypot(cp.x-mapCx,cp.y-mapCy)<[0,2800,6500,12500][zone])continue;
+for(let i=0;i<(3+r()*4|0);i++){const tr=18+r()*22;
+const x=cp.x+(r()-.5)*150-tr,y=cp.y+(r()-.5)*150-tr;
+if(!inBounds(x,y))continue;
+G.ob.push({x,y,w:tr*2,h:tr*2,tp:2,r:tr,tcx:x+tr,tcy:y+tr});}}
+for(let i=0;i<[0,80,120,200][zone];i++){const p=randInMap(r);ftrees.push({x:p.x,y:p.y,a:r()*PI2,l:60+r()*100,w:6+r()*8});}
+for(let i=0;i<[0,30,40,60][zone];i++){const p=randInMap(r);cfires.push({x:p.x,y:p.y,ph:r()*PI2,sz:10+r()*8});}
+for(let i=0;i<[0,400,600,800][zone];i++){const p=randInMap(r);lpatch.push({x:p.x,y:p.y,s:8+r()*20,c:['#2a4a1a','#3a5a2a','#1a3a12','#4a6a2a','#2a3a18'][r()*5|0]});}
+for(let i=0;i<[0,300,400,500][zone];i++){const p=randInMap(r);deco.push({x:p.x,y:p.y,tp:r()*5|0,s:4+r()*8,v:r()});}
+// Unlock 2 temples per expansion
+unlockTemplesForZone(zone);
 }
 function inBounds(x,y){
 // Point-in-polygon (ray casting)
@@ -119,6 +155,10 @@ return{x:mapCx,y:mapCy};}
 
 // Waypoints
 let waypoints=[];
+
+// Camp (colonial settlement at map center)
+const CAMP_R=180; // camp safe zone radius
+function inCamp(x,y){return Math.hypot(x-mapCx,y-mapCy)<CAMP_R;}
 
 // Ritual animation state
 let ritualAnim=null;
@@ -146,49 +186,43 @@ const LT=[
 {t:'minigun',l:'MINIGUN',c:'#ff4',ic:9,v:0},
 ];
 
-// 32 RITUAL DEFINITIONS — 4 randomly chosen per playthrough
+// 32 RITUAL DEFINITIONS with tiers: 1=Minor, 2=Strong, 3=Godlike
 const RITUALS=[
-// ── SPEED / MOVEMENT ──
-{name:'Rite of Swiftness',desc:'2x MOVEMENT SPEED',req:[{t:'ammo',k:'smg',n:60,label:'60 SMG Ammo'},{t:'hp',n:30,label:'30 Health'}],effect:'speed2x',color:'#4ef'},
-{name:'Rite of the Wind',desc:'1.5x SPEED + SPRINT 2x',req:[{t:'ammo',k:'rifle',n:15,label:'15 Rifle Ammo'},{t:'grenade',n:3,label:'3 Grenades'}],effect:'windrun',color:'#aef'},
-{name:'Rite of Phase',desc:'WALK THROUGH OBSTACLES',req:[{t:'hp',n:50,label:'50 Health'},{t:'gun',k:'smg',label:'Sacrifice SMG'}],effect:'phase',color:'#caf'},
-// ── DAMAGE ──
-{name:'Rite of Annihilation',desc:'2x BULLET DAMAGE',req:[{t:'gun',k:'shotgun',label:'Sacrifice SHOTGUN'},{t:'grenade',n:8,label:'8 Grenades'}],effect:'dmg2x',color:'#f80'},
-{name:'Rite of the Marksman',desc:'3x RIFLE & PISTOL DMG',req:[{t:'ammo',k:'smg',n:90,label:'90 SMG Ammo'},{t:'hp',n:20,label:'20 Health'}],effect:'marksman',color:'#f4f'},
-{name:'Rite of Fury',desc:'DAMAGE SCALES WITH KILLS',req:[{t:'grenade',n:6,label:'6 Grenades'},{t:'ammo',k:'shotgun',n:18,label:'18 Shotgun Ammo'}],effect:'fury',color:'#f42'},
-{name:'Rite of Glass Cannon',desc:'4x DMG BUT -50% MAX HP',req:[{t:'hp',n:40,label:'40 Health'},{t:'ammo',k:'minigun',n:100,label:'100 Minigun Ammo'}],effect:'glass',color:'#ff2'},
-// ── FIRE RATE ──
-{name:'Rite of the Storm',desc:'3x FIRE RATE ALL GUNS',req:[{t:'ammo',k:'minigun',n:200,label:'200 Minigun Ammo'},{t:'gun',k:'smg',label:'Sacrifice SMG'}],effect:'firerate3x',color:'#ff0'},
-{name:'Rite of Rapid',desc:'2x FIRE RATE + INSTANT RELOAD',req:[{t:'ammo',k:'smg',n:60,label:'60 SMG Ammo'},{t:'ammo',k:'shotgun',n:12,label:'12 Shotgun Ammo'}],effect:'rapid',color:'#ee4'},
-// ── EXPLOSION / AOE ──
-{name:'Rite of Explosion',desc:'BULLETS EXPLODE ON HIT',req:[{t:'grenade',n:10,label:'10 Grenades'},{t:'hp',n:60,label:'60 Health'}],effect:'explode',color:'#fa0'},
-{name:'Rite of Chain Lightning',desc:'HITS CHAIN TO 3 NEARBY',req:[{t:'ammo',k:'rifle',n:20,label:'20 Rifle Ammo'},{t:'grenade',n:5,label:'5 Grenades'}],effect:'chain',color:'#4af'},
-{name:'Rite of the Meteor',desc:'GRENADES 3x BIGGER + 2x DMG',req:[{t:'grenade',n:12,label:'12 Grenades'},{t:'hp',n:30,label:'30 Health'}],effect:'meteor',color:'#f60'},
-{name:'Rite of Shrapnel',desc:'ENEMIES EXPLODE ON DEATH',req:[{t:'gun',k:'rifle',label:'Sacrifice RIFLE'},{t:'grenade',n:7,label:'7 Grenades'}],effect:'shrapnel',color:'#e80'},
-// ── DEFENSE / HEALTH ──
-{name:'Rite of Iron Skin',desc:'TAKE 50% LESS DAMAGE',req:[{t:'hp',n:50,label:'50 Health'},{t:'grenade',n:5,label:'5 Grenades'}],effect:'armor50',color:'#88f'},
-{name:'Rite of Vampirism',desc:'LIFESTEAL 20% OF DAMAGE',req:[{t:'hp',n:40,label:'40 Health'},{t:'ammo',k:'rifle',n:20,label:'20 Rifle Ammo'}],effect:'lifesteal',color:'#f4a'},
-{name:'Rite of Regeneration',desc:'REGEN 3 HP/SEC',req:[{t:'ammo',k:'smg',n:90,label:'90 SMG Ammo'},{t:'ammo',k:'shotgun',n:12,label:'12 Shotgun Ammo'}],effect:'regen',color:'#4f4'},
-{name:'Rite of the Titan',desc:'+200 MAX HP + FULL HEAL',req:[{t:'gun',k:'minigun',label:'Sacrifice MINIGUN'},{t:'grenade',n:4,label:'4 Grenades'}],effect:'titan',color:'#8cf'},
-{name:'Rite of Thorns',desc:'REFLECT 30% DAMAGE TO ATTACKER',req:[{t:'hp',n:35,label:'35 Health'},{t:'ammo',k:'minigun',n:50,label:'50 Minigun Ammo'}],effect:'thorns',color:'#a8f'},
-{name:'Rite of Undying',desc:'REVIVE ONCE WITH 50% HP',req:[{t:'hp',n:70,label:'70 Health'},{t:'gun',k:'smg',label:'Sacrifice SMG'}],effect:'undying',color:'#fff'},
-// ── ENEMY DEBUFFS ──
-{name:'Rite of Devastation',desc:'-50% ALL ENEMY HP',req:[{t:'gun',k:'rifle',label:'Sacrifice RIFLE'},{t:'ammo',k:'shotgun',n:24,label:'24 Shotgun Ammo'}],effect:'enemyhp50',color:'#f44'},
-{name:'Rite of Frost',desc:'ENEMIES MOVE 50% SLOWER',req:[{t:'ammo',k:'rifle',n:30,label:'30 Rifle Ammo'},{t:'hp',n:25,label:'25 Health'}],effect:'frost',color:'#8ef'},
-{name:'Rite of Fear',desc:'ENEMIES FLEE WHEN LOW HP',req:[{t:'grenade',n:6,label:'6 Grenades'},{t:'ammo',k:'smg',n:45,label:'45 SMG Ammo'}],effect:'fear',color:'#a6f'},
-{name:'Rite of Weakness',desc:'ENEMIES DEAL 50% LESS DMG',req:[{t:'ammo',k:'shotgun',n:18,label:'18 Shotgun Ammo'},{t:'hp',n:30,label:'30 Health'}],effect:'weaken',color:'#aaf'},
-// ── BULLET MODIFIERS ──
-{name:'Rite of Piercing',desc:'BULLETS PASS THROUGH ENEMIES',req:[{t:'ammo',k:'rifle',n:25,label:'25 Rifle Ammo'},{t:'ammo',k:'minigun',n:80,label:'80 Minigun Ammo'}],effect:'pierce',color:'#f8f'},
-{name:'Rite of Homing',desc:'BULLETS TRACK NEAREST ENEMY',req:[{t:'gun',k:'shotgun',label:'Sacrifice SHOTGUN'},{t:'hp',n:35,label:'35 Health'}],effect:'homing',color:'#8ff'},
-{name:'Rite of Ricochet',desc:'BULLETS BOUNCE 3 TIMES',req:[{t:'ammo',k:'smg',n:75,label:'75 SMG Ammo'},{t:'grenade',n:4,label:'4 Grenades'}],effect:'ricochet',color:'#ef8'},
-// ── RESOURCE / UTILITY ──
-{name:'Rite of Abundance',desc:'ENEMIES DROP 2x LOOT',req:[{t:'hp',n:45,label:'45 Health'},{t:'grenade',n:3,label:'3 Grenades'}],effect:'loot2x',color:'#ff4'},
-{name:'Rite of Infinite',desc:'INFINITE AMMO ALL GUNS',req:[{t:'gun',k:'minigun',label:'Sacrifice MINIGUN'},{t:'ammo',k:'rifle',n:20,label:'20 Rifle Ammo'}],effect:'infammo',color:'#4ff'},
-{name:'Rite of the Arsenal',desc:'GET ALL GUNS + 100 AMMO EACH',req:[{t:'hp',n:60,label:'60 Health'},{t:'grenade',n:8,label:'8 Grenades'}],effect:'arsenal',color:'#af4'},
-// ── XP / SCALING ──
-{name:'Rite of Wisdom',desc:'3x XP FROM ALL KILLS',req:[{t:'ammo',k:'smg',n:50,label:'50 SMG Ammo'},{t:'ammo',k:'shotgun',n:12,label:'12 Shotgun Ammo'}],effect:'xp3x',color:'#4f8'},
-{name:'Rite of Evolution',desc:'+5 LEVELS INSTANTLY',req:[{t:'hp',n:55,label:'55 Health'},{t:'gun',k:'rifle',label:'Sacrifice RIFLE'}],effect:'levels5',color:'#8f4'},
-{name:'Rite of Greed',desc:'2x SCORE + BONUS PER WAVE',req:[{t:'grenade',n:5,label:'5 Grenades'},{t:'ammo',k:'minigun',n:60,label:'60 Minigun Ammo'}],effect:'greed',color:'#fd0'},
+// ── TIER 1: MINOR (available zone 1) ──
+{name:'Rite of Swiftness',desc:'2x MOVEMENT SPEED',req:[{t:'ammo',k:'smg',n:60,label:'60 SMG Ammo'},{t:'hp',n:30,label:'30 Health'}],effect:'speed2x',color:'#4ef',tier:1},
+{name:'Rite of the Wind',desc:'1.5x SPEED + SPRINT 2x',req:[{t:'ammo',k:'rifle',n:15,label:'15 Rifle Ammo'},{t:'grenade',n:3,label:'3 Grenades'}],effect:'windrun',color:'#aef',tier:1},
+{name:'Rite of Iron Skin',desc:'TAKE 50% LESS DAMAGE',req:[{t:'hp',n:50,label:'50 Health'},{t:'grenade',n:5,label:'5 Grenades'}],effect:'armor50',color:'#88f',tier:1},
+{name:'Rite of Regeneration',desc:'REGEN 3 HP/SEC',req:[{t:'ammo',k:'smg',n:90,label:'90 SMG Ammo'},{t:'ammo',k:'shotgun',n:12,label:'12 Shotgun Ammo'}],effect:'regen',color:'#4f4',tier:1},
+{name:'Rite of Abundance',desc:'ENEMIES DROP 2x LOOT',req:[{t:'hp',n:45,label:'45 Health'},{t:'grenade',n:3,label:'3 Grenades'}],effect:'loot2x',color:'#ff4',tier:1},
+{name:'Rite of Frost',desc:'ENEMIES MOVE 50% SLOWER',req:[{t:'ammo',k:'rifle',n:30,label:'30 Rifle Ammo'},{t:'hp',n:25,label:'25 Health'}],effect:'frost',color:'#8ef',tier:1},
+{name:'Rite of Wisdom',desc:'3x XP FROM ALL KILLS',req:[{t:'ammo',k:'smg',n:50,label:'50 SMG Ammo'},{t:'ammo',k:'shotgun',n:12,label:'12 Shotgun Ammo'}],effect:'xp3x',color:'#4f8',tier:1},
+{name:'Rite of Thorns',desc:'REFLECT 30% DAMAGE TO ATTACKER',req:[{t:'hp',n:35,label:'35 Health'},{t:'ammo',k:'minigun',n:50,label:'50 Minigun Ammo'}],effect:'thorns',color:'#a8f',tier:1},
+{name:'Rite of Fear',desc:'ENEMIES FLEE WHEN LOW HP',req:[{t:'grenade',n:6,label:'6 Grenades'},{t:'ammo',k:'smg',n:45,label:'45 SMG Ammo'}],effect:'fear',color:'#a6f',tier:1},
+{name:'Rite of Weakness',desc:'ENEMIES DEAL 50% LESS DMG',req:[{t:'ammo',k:'shotgun',n:18,label:'18 Shotgun Ammo'},{t:'hp',n:30,label:'30 Health'}],effect:'weaken',color:'#aaf',tier:1},
+{name:'Rite of Greed',desc:'2x SCORE + BONUS PER WAVE',req:[{t:'grenade',n:5,label:'5 Grenades'},{t:'ammo',k:'minigun',n:60,label:'60 Minigun Ammo'}],effect:'greed',color:'#fd0',tier:1},
+// ── TIER 2: STRONG (available zone 2) ──
+{name:'Rite of Annihilation',desc:'2x BULLET DAMAGE',req:[{t:'gun',k:'shotgun',label:'Sacrifice SHOTGUN'},{t:'grenade',n:8,label:'8 Grenades'}],effect:'dmg2x',color:'#f80',tier:2},
+{name:'Rite of the Marksman',desc:'3x RIFLE & PISTOL DMG',req:[{t:'ammo',k:'smg',n:90,label:'90 SMG Ammo'},{t:'hp',n:20,label:'20 Health'}],effect:'marksman',color:'#f4f',tier:2},
+{name:'Rite of Rapid',desc:'2x FIRE RATE + INSTANT RELOAD',req:[{t:'ammo',k:'smg',n:60,label:'60 SMG Ammo'},{t:'ammo',k:'shotgun',n:12,label:'12 Shotgun Ammo'}],effect:'rapid',color:'#ee4',tier:2},
+{name:'Rite of Vampirism',desc:'LIFESTEAL 20% OF DAMAGE',req:[{t:'hp',n:40,label:'40 Health'},{t:'ammo',k:'rifle',n:20,label:'20 Rifle Ammo'}],effect:'lifesteal',color:'#f4a',tier:2},
+{name:'Rite of the Titan',desc:'+200 MAX HP + FULL HEAL',req:[{t:'gun',k:'minigun',label:'Sacrifice MINIGUN'},{t:'grenade',n:4,label:'4 Grenades'}],effect:'titan',color:'#8cf',tier:2},
+{name:'Rite of Shrapnel',desc:'ENEMIES EXPLODE ON DEATH',req:[{t:'gun',k:'rifle',label:'Sacrifice RIFLE'},{t:'grenade',n:7,label:'7 Grenades'}],effect:'shrapnel',color:'#e80',tier:2},
+{name:'Rite of the Meteor',desc:'GRENADES 3x BIGGER + 2x DMG',req:[{t:'grenade',n:12,label:'12 Grenades'},{t:'hp',n:30,label:'30 Health'}],effect:'meteor',color:'#f60',tier:2},
+{name:'Rite of Devastation',desc:'-50% ALL ENEMY HP',req:[{t:'gun',k:'rifle',label:'Sacrifice RIFLE'},{t:'ammo',k:'shotgun',n:24,label:'24 Shotgun Ammo'}],effect:'enemyhp50',color:'#f44',tier:2},
+{name:'Rite of Piercing',desc:'BULLETS PASS THROUGH ENEMIES',req:[{t:'ammo',k:'rifle',n:25,label:'25 Rifle Ammo'},{t:'ammo',k:'minigun',n:80,label:'80 Minigun Ammo'}],effect:'pierce',color:'#f8f',tier:2},
+{name:'Rite of Ricochet',desc:'BULLETS BOUNCE 3 TIMES',req:[{t:'ammo',k:'smg',n:75,label:'75 SMG Ammo'},{t:'grenade',n:4,label:'4 Grenades'}],effect:'ricochet',color:'#ef8',tier:2},
+{name:'Rite of Phase',desc:'WALK THROUGH OBSTACLES',req:[{t:'hp',n:50,label:'50 Health'},{t:'gun',k:'smg',label:'Sacrifice SMG'}],effect:'phase',color:'#caf',tier:2},
+// ── TIER 3: GODLIKE (available zone 3) ──
+{name:'Rite of Fury',desc:'DAMAGE SCALES WITH KILLS',req:[{t:'grenade',n:6,label:'6 Grenades'},{t:'ammo',k:'shotgun',n:18,label:'18 Shotgun Ammo'}],effect:'fury',color:'#f42',tier:3},
+{name:'Rite of Glass Cannon',desc:'4x DMG BUT -50% MAX HP',req:[{t:'hp',n:40,label:'40 Health'},{t:'ammo',k:'minigun',n:100,label:'100 Minigun Ammo'}],effect:'glass',color:'#ff2',tier:3},
+{name:'Rite of the Storm',desc:'3x FIRE RATE ALL GUNS',req:[{t:'ammo',k:'minigun',n:200,label:'200 Minigun Ammo'},{t:'gun',k:'smg',label:'Sacrifice SMG'}],effect:'firerate3x',color:'#ff0',tier:3},
+{name:'Rite of Explosion',desc:'BULLETS EXPLODE ON HIT',req:[{t:'grenade',n:10,label:'10 Grenades'},{t:'hp',n:60,label:'60 Health'}],effect:'explode',color:'#fa0',tier:3},
+{name:'Rite of Chain Lightning',desc:'HITS CHAIN TO 3 NEARBY',req:[{t:'ammo',k:'rifle',n:20,label:'20 Rifle Ammo'},{t:'grenade',n:5,label:'5 Grenades'}],effect:'chain',color:'#4af',tier:3},
+{name:'Rite of Undying',desc:'REVIVE ONCE WITH 50% HP',req:[{t:'hp',n:70,label:'70 Health'},{t:'gun',k:'smg',label:'Sacrifice SMG'}],effect:'undying',color:'#fff',tier:3},
+{name:'Rite of Homing',desc:'BULLETS TRACK NEAREST ENEMY',req:[{t:'gun',k:'shotgun',label:'Sacrifice SHOTGUN'},{t:'hp',n:35,label:'35 Health'}],effect:'homing',color:'#8ff',tier:3},
+{name:'Rite of Infinite',desc:'INFINITE AMMO ALL GUNS',req:[{t:'gun',k:'minigun',label:'Sacrifice MINIGUN'},{t:'ammo',k:'rifle',n:20,label:'20 Rifle Ammo'}],effect:'infammo',color:'#4ff',tier:3},
+{name:'Rite of the Arsenal',desc:'GET ALL GUNS + 100 AMMO EACH',req:[{t:'hp',n:60,label:'60 Health'},{t:'grenade',n:8,label:'8 Grenades'}],effect:'arsenal',color:'#af4',tier:3},
+{name:'Rite of Evolution',desc:'+5 LEVELS INSTANTLY',req:[{t:'hp',n:55,label:'55 Health'},{t:'gun',k:'rifle',label:'Sacrifice RIFLE'}],effect:'levels5',color:'#8f4',tier:3},
 ];
 
 const ET=[
@@ -223,41 +257,71 @@ sWave();
 }
 
 function genWorld(){
-G.ob=[];G.temples=[];deco=[];cfires=[];ftrees=[];lpatch=[];
+G.ob=[];G.temples=[];G.allTemples=[];G.fragments=[];G.fragCollected=0;G.fragTotal=5;
+deco=[];cfires=[];ftrees=[];lpatch=[];
 const r=sr;
-// Rocks & ruins (scaled up 10x: 600 obstacles)
-for(let i=0;i<600;i++){
+// Initial zone (zone 0) content
+for(let i=0;i<100;i++){
 const w=40+r()*100,h=40+r()*80;
 const p=randInMap(r);
-if(Math.hypot(p.x-mapCx,p.y-mapCy)<400)continue;
+if(Math.hypot(p.x-mapCx,p.y-mapCy)<CAMP_R+60)continue;
 G.ob.push({x:p.x,y:p.y,w,h,tp:r()<.5?0:1});}
-// Tree clusters (200 clusters)
-for(let g=0;g<200;g++){const cp=randInMap(r);
+for(let g=0;g<30;g++){const cp=randInMap(r);
 for(let i=0;i<(3+r()*4|0);i++){const tr=18+r()*22;
 const x=cp.x+(r()-.5)*150-tr,y=cp.y+(r()-.5)*150-tr;
 if(!inBounds(x,y))continue;
 G.ob.push({x,y,w:tr*2,h:tr*2,tp:2,r:tr,tcx:x+tr,tcy:y+tr});}}
-// TEMPLES — 4, well-spread
-const usedRituals=[],shuffled=[...Array(RITUALS.length).keys()];
-for(let i=shuffled.length-1;i>0;i--){const j=Math.floor(r()*(i+1));[shuffled[i],shuffled[j]]=[shuffled[j],shuffled[i]];}
-for(let i=0;i<4;i++){
-let x,y,ok;
+for(let i=0;i<60;i++){const p=randInMap(r);ftrees.push({x:p.x,y:p.y,a:r()*PI2,l:60+r()*100,w:6+r()*8});}
+for(let i=0;i<20;i++){const p=randInMap(r);cfires.push({x:p.x,y:p.y,ph:r()*PI2,sz:10+r()*8});}
+for(let i=0;i<300;i++){const p=randInMap(r);lpatch.push({x:p.x,y:p.y,s:8+r()*20,c:['#2a4a1a','#3a5a2a','#1a3a12','#4a6a2a','#2a3a18'][r()*5|0]});}
+for(let i=0;i<200;i++){const p=randInMap(r);deco.push({x:p.x,y:p.y,tp:r()*5|0,s:4+r()*8,v:r()});}
+// ── WAYFINDER FRAGMENTS (5 in zone 0) ──
+for(let i=0;i<5;i++){
+let fx,fy;
+for(let a=0;a<50;a++){
+const ang=r()*PI2,dist=600+r()*1800;
+fx=mapCx+Math.cos(ang)*dist;fy=mapCy+Math.sin(ang)*dist;
+if(!inBounds(fx,fy))continue;
+let ok=1;for(const f of G.fragments)if(Math.hypot(fx-f.x,fy-f.y)<400){ok=0;break;}
+for(const o of G.ob)if(fx>o.x-30&&fx<o.x+o.w+30&&fy>o.y-30&&fy<o.y+o.h+30){ok=0;break;}
+if(ok)break;}
+G.fragments.push({x:fx,y:fy,collected:false});}
+// ── TEMPLES: tier-gated across zones 1-3 (no zone 0 temples) ──
+// Zone 1: 2× Tier 1, Zone 2: 3× Tier 2, Zone 3: 3× Tier 3
+const t1=RITUALS.filter(r=>r.tier===1),t2=RITUALS.filter(r=>r.tier===2),t3=RITUALS.filter(r=>r.tier===3);
+function shuffleArr(arr,rng){const a=[...arr];for(let i=a.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+const s1=shuffleArr(t1,r),s2=shuffleArr(t2,r),s3=shuffleArr(t3,r);
+const templeConfig=[
+{zone:1,ritual:s1[0]},{zone:1,ritual:s1[1]},
+{zone:2,ritual:s2[0]},{zone:2,ritual:s2[1]},{zone:2,ritual:s2[2]},
+{zone:3,ritual:s3[0]},{zone:3,ritual:s3[1]},{zone:3,ritual:s3[2]}];
+const zoneRadii=[[0,0],[2800,6500],[6500,12500],[12500,21000]];
+for(const tc of templeConfig){
+const[minR,maxR]=zoneRadii[tc.zone];
+let x,y;
 for(let a=0;a<100;a++){
-const tp=randInMap(r);x=tp.x;y=tp.y;ok=1;
-if(Math.hypot(x-mapCx,y-mapCy)<800){ok=0;continue;}
-for(const t of G.temples)if(Math.hypot(x-t.x,y-t.y)<5000){ok=0;break;}
+const ang=r()*PI2,dist=minR+r()*(maxR-minR);
+x=mapCx+Math.cos(ang)*dist;y=mapCy+Math.sin(ang)*dist;
+const inZ=ptInPoly(x,y,zonePolys[tc.zone]);
+if(!inZ)continue;
+let ok=1;
+for(const t of G.allTemples)if(Math.hypot(x-t.x,y-t.y)<2000){ok=0;break;}
 for(const o of G.ob)if(x>o.x-80&&x<o.x+o.w+80&&y>o.y-80&&y<o.y+o.h+80){ok=0;break;}
 if(ok)break;}
-G.temples.push({x,y,ritual:RITUALS[shuffled[i]],done:false,glow:0});
-G.ob.push({x:x-35,y:y-35,w:70,h:70,tp:3,temple:true});}
-// Fallen trees (400)
-for(let i=0;i<400;i++){const p=randInMap(r);ftrees.push({x:p.x,y:p.y,a:r()*PI2,l:60+r()*100,w:6+r()*8});}
-// Campfires (150)
-for(let i=0;i<150;i++){const p=randInMap(r);cfires.push({x:p.x,y:p.y,ph:r()*PI2,sz:10+r()*8});}
-// Leaf patches (2000)
-for(let i=0;i<2000;i++){const p=randInMap(r);lpatch.push({x:p.x,y:p.y,s:8+r()*20,c:['#2a4a1a','#3a5a2a','#1a3a12','#4a6a2a','#2a3a18'][r()*5|0]});}
-// Small deco (1500)
-for(let i=0;i<1500;i++){const p=randInMap(r);deco.push({x:p.x,y:p.y,tp:r()*5|0,s:4+r()*8,v:r()});}
+G.allTemples.push({x,y,ritual:tc.ritual,done:false,glow:0,zone:tc.zone});}
+// No temples activated at start (zone 0 has none)
+}
+function ptInPoly(x,y,poly){
+let inside=false;
+for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+const xi=poly[i].x,yi=poly[i].y,xj=poly[j].x,yj=poly[j].y;
+if((yi>y)!==(yj>y)&&x<(xj-xi)*(y-yi)/(yj-yi)+xi)inside=!inside;}
+return inside;}
+function unlockTemplesForZone(zone){
+for(const t of G.allTemples){
+if(t.zone===zone&&!G.temples.includes(t)){
+G.temples.push(t);
+G.ob.push({x:t.x-35,y:t.y-35,w:70,h:70,tp:3,temple:true});}}
 }
 
 function sWave(){G.wl=6+G.wv*3+Math.floor(G.wv*G.wv*.3);G.wt=0;G.st=0;}
@@ -268,10 +332,14 @@ if(w>=10&&r<.08)ti=5;else if(w>=6&&r<.15)ti=Math.min(4,mx);
 else if(w>=4&&r<.3)ti=Math.min(3,mx);else if(w>=2&&r<.5)ti=Math.min(2,mx);
 else if(r<.7)ti=Math.min(1,mx);else ti=0;
 const t=ET[ti],sf=1+(w-1)*.12;let x,y;const p=G.p;
-if(Math.random()<.7){const a=Math.random()*PI2,d=600+Math.random()*300;x=p.x+Math.cos(a)*d;y=p.y+Math.sin(a)*d;}
-else{const fp=randInMap(mkRng(Math.random()*1e9|0));x=fp.x;y=fp.y;}
-x=Math.max(30,Math.min(49970,x));y=Math.max(30,Math.min(49970,y));
-if(!inBounds(x,y)){const ip=randInMap(mkRng(Math.random()*1e9|0));x=ip.x;y=ip.y;}
+// ALWAYS spawn near player (400-800 range) to prevent drought
+const a=Math.random()*PI2,d=400+Math.random()*400;
+x=p.x+Math.cos(a)*d;y=p.y+Math.sin(a)*d;
+if(inCamp(x,y)){x=p.x-Math.cos(a)*d;y=p.y-Math.sin(a)*d;}
+if(!inBounds(x,y)){
+// Try opposite side
+x=p.x-Math.cos(a)*d;y=p.y-Math.sin(a)*d;
+if(!inBounds(x,y)){const ip=randInMap(mkRng(Math.random()*1e9|0));x=ip.x;y=ip.y;}}
 const hpScale=G.ehpMul;
 G.en.push({x,y,hp:Math.floor(t.h*sf*hpScale),mhp:Math.floor(t.h*sf*hpScale),sp:t.s*(1+(w-1)*.02)*G.eSpdMul,
 sz:t.z,bc:t.bc,ec:t.ec,dm:Math.floor(t.d*sf),xp:t.xp,sc:t.sc,nm:t.n,a:0,at:0,
@@ -350,9 +418,18 @@ case'infammo':p.infammo=1;p.buffs.push('INFINITE AMMO');break;
 case'arsenal':for(const wk of ['smg','shotgun','rifle','minigun']){if(!p.w.includes(wk))p.w.push(wk);p.am[wk]+=100;p.mg[wk]=WP[wk].m;}p.buffs.push('FULL ARSENAL');break;
 // XP / Scaling
 case'xp3x':G.xpMul=(G.xpMul||1)*3;p.buffs.push('3x XP');break;
-case'levels5':for(let i=0;i<5;i++){p.lv++;p.xn=Math.floor(100*Math.pow(1.3,p.lv-1));p.mhp+=10;p.hp=Math.min(p.hp+25,p.mhp);p.sp+=.05;}p.buffs.push('+5 LEVELS');break;
+case'levels5':for(let i=0;i<5;i++){p.lv++;p.xn=Math.floor(100*Math.pow(1.3,p.lv-1));p.mhp+=10;p.hp=Math.min(p.hp+25,p.mhp);p.sp+=.05;
+checkExpansion(p.lv);}G.lvAnim={t:0,dur:1200,lv:p.lv};p.buffs.push('+5 LEVELS');break;
 case'greed':G.scoreMul=(G.scoreMul||1)*2;p.buffs.push('2x SCORE');break;
 }}
+
+function checkExpansion(lv){
+const expLevels=[3,5,7];
+const expIdx=expLevels.indexOf(lv);
+if(expIdx>=0&&currentZone<=expIdx){
+expandMap(expIdx+1);
+sMsg('MAP EXPANDED — NEW AREA UNLOCKED!','#ff4');
+G.expAnim={t:0,dur:2500,zone:expIdx+1};}}
 
 function uPlayer(dt){
 const p=G.p;let mx=0,my=0;
@@ -380,6 +457,13 @@ for(let i=1;i<=5;i++)if(K[i]&&i<=p.w.length&&p.cw!==i-1){p.cw=i-1;p.rl=0;}
 if(K.g&&p.gr>0&&!p.gc){p.gr--;p.gc=1;G.gp.push({x:p.x,y:p.y,vx:Math.cos(p.a)*8,vy:Math.sin(p.a)*8,tm:800});setTimeout(()=>p.gc=0,500);}
 // Pickup loot (E)
 if(K.e)for(let i=G.lo.length-1;i>=0;i--){const l=G.lo[i];if(Math.hypot(p.x-l.x,p.y-l.y)<40){pickup(l);G.lo.splice(i,1);break;}}
+// Auto-collect wayfinder fragments (walk near)
+for(const f of G.fragments){if(!f.collected&&Math.hypot(p.x-f.x,p.y-f.y)<50){
+f.collected=true;G.fragCollected++;
+sMsg('WAYFINDER FRAGMENT ('+G.fragCollected+'/'+G.fragTotal+')','#af8');
+for(let k=0;k<15;k++){const a=k/15*PI2;G.pt.push({x:f.x,y:f.y,vx:Math.cos(a)*4,vy:Math.sin(a)*4,li:500,ml:500,c:'#af8',s:3+Math.random()*3});}
+if(G.fragCollected>=G.fragTotal){sMsg('ALL FRAGMENTS — TEMPLE LOCATIONS REVEALED!','#ff4');
+G.expAnim={t:0,dur:2500,zone:-1};}}}
 // Temple ritual (F)
 if(K.f&&!p._ritualCd&&!ritualAnim){
 for(const t of G.temples){if(t.done)continue;
@@ -398,7 +482,13 @@ p._waypointCd=1;setTimeout(()=>p._waypointCd=0,300);}
 if(p.iv>0)p.iv-=dt;if(p.fl>0)p.fl-=dt;
 // Regen
 if(p.regen>0){p.hp=Math.min(p.mhp,p.hp+p.regen*dt/1000);}
-while(p.xp>=p.xn){p.xp-=p.xn;p.lv++;p.xn=Math.floor(100*Math.pow(1.3,p.lv-1));p.mhp+=10;p.hp=Math.min(p.hp+25,p.mhp);p.sp+=.05;sMsg('LEVEL '+p.lv+'!','#4e8');}
+// Camp healing (2 hp/sec while inside)
+if(inCamp(p.x,p.y)){p.hp=Math.min(p.mhp,p.hp+2*dt/1000);}
+while(p.xp>=p.xn){p.xp-=p.xn;p.lv++;p.xn=Math.floor(100*Math.pow(1.3,p.lv-1));p.mhp+=10;p.hp=Math.min(p.hp+25,p.mhp);p.sp+=.05;
+G.lvAnim={t:0,dur:1200,lv:p.lv};
+for(let k=0;k<20;k++){const a=k/20*PI2;G.pt.push({x:p.x,y:p.y,vx:Math.cos(a)*3,vy:Math.sin(a)*3,li:600,ml:600,c:'#4e8',s:3+Math.random()*3});}
+sMsg('LEVEL '+p.lv+'!','#4e8');
+checkExpansion(p.lv);}
 }
 
 function sRld(wk){const p=G.p;if(p.am[wk]<=0||p.mg[wk]>=WP[wk].m)return;p.rl=1;p.rs=G.t;p.rw=wk;}
@@ -455,8 +545,11 @@ for(const o of G.ob){if(crc(e.x+nx*e.sp*10,e.y+ny*e.sp*10,e.sz,o.x,o.y,o.w,o.h))
 const px=-ny,py=nx;if(!crc(e.x+px*e.sp*10,e.y+py*e.sp*10,e.sz,o.x,o.y,o.w,o.h)){nx=px*.8+nx*.2;ny=py*.8+ny*.2;}
 else{nx=ny*.8+nx*.2;ny=-nx*.8+ny*.2;}const l=Math.hypot(nx,ny);nx/=l;ny/=l;break;}}
 e.x+=nx*e.sp*dt/16;e.y+=ny*e.sp*dt/16;}
+// Push enemies out of camp safe zone
+if(inCamp(e.x,e.y)){const cdx=e.x-mapCx,cdy=e.y-mapCy,cd=Math.hypot(cdx,cdy)||1;
+e.x=mapCx+cdx/cd*(CAMP_R+5);e.y=mapCy+cdy/cd*(CAMP_R+5);}
 for(const o of G.ob){const r=crr(e.x,e.y,e.sz,o.x,o.y,o.w,o.h);if(r){e.x=r.x;e.y=r.y;}}
-if(!fleeing&&dist<e.sz+p.sz+4&&e.at<=0){dmgP(Math.floor(e.dm*G.eDmgMul));e.at=800;}
+if(!fleeing&&dist<e.sz+p.sz+4&&e.at<=0&&!inCamp(p.x,p.y)){dmgP(Math.floor(e.dm*G.eDmgMul));e.at=800;}
 if(e.at>0)e.at-=dt;
 if(e.sht>=0&&!fleeing){e.sht-=dt;if(e.sht<=0&&dist<500){const cnt=e.bo?3:1;
 for(let b=0;b<cnt;b++){const sa=e.a+(Math.random()-.5)*.16;
@@ -514,7 +607,7 @@ if(ne){const ra=Math.atan2(ne.y-b.y,ne.x-b.x),spd=Math.hypot(b.vx,b.vy);
 b.vx=Math.cos(ra)*spd;b.vy=Math.sin(ra)*spd;b.li=600;}
 else{G.b.splice(i,1);}break;}
 G.b.splice(i,1);break;}}}
-else{if(Math.hypot(b.x-p.x,b.y-p.y)<b.s+p.sz){dmgP(b.d);G.b.splice(i,1);}}}
+else{if(Math.hypot(b.x-p.x,b.y-p.y)<b.s+p.sz&&!inCamp(p.x,p.y)){dmgP(b.d);G.b.splice(i,1);}}}
 }
 
 function killE(i){
@@ -555,8 +648,17 @@ if(G.pmt>0){G.pmt-=dt;if(G.pmt<=0)G.pm=null;}
 }
 
 function uWaves(dt){
-if(G.wl>0&&G.en.length<40){G.st-=dt;if(G.st<=0){sEnemy();G.st=Math.max(100,600-G.wv*30);}}
-if(G.wl<=0&&G.en.length===0){G.wt+=dt;if(G.wt>2000){G.wv++;sWave();}}
+const p=G.p;
+// Cull enemies that are way too far (they'll never reach player)
+for(let i=G.en.length-1;i>=0;i--){
+if(Math.hypot(G.en[i].x-p.x,G.en[i].y-p.y)>1800){G.en.splice(i,1);}}
+// Continuous spawning: maintain target enemy count near player at all times
+const targetCount=Math.min(9,2+G.wv);
+const spawnInterval=Math.max(120,500-G.wv*20);
+if(G.en.length<targetCount){G.st-=dt;
+if(G.st<=0){sEnemy();G.st=spawnInterval;}}
+// Wave advances when enough kills accumulate
+if(G.wl<=0){G.wt+=dt;if(G.wt>2000){G.wv++;sWave();}}
 }
 
 // ======= RENDERING =======
@@ -605,6 +707,153 @@ X.fillStyle='#555';for(let s=0;s<6;s++){const a=s/6*PI2+.3;X.beginPath();X.arc(s
 for(let f=0;f<4;f++){const fa=Math.sin(G.t/60+cf.ph+f)*3,fh=cf.sz*(.6+Math.sin(G.t/80+f*2)*.3);
 X.fillStyle=f<2?`rgba(255,200,50,${(.7*fl).toFixed(2)})`:`rgba(255,100,20,${(.5*fl).toFixed(2)})`;
 X.beginPath();X.moveTo(sx+fa-4+f*2,sy+2);X.quadraticCurveTo(sx+fa+f*1.5,sy-fh,sx+fa+4+f*2,sy+2);X.fill();}}
+
+// ── COLONIAL CAMP ──
+{const ccx=mapCx-cx,ccy=mapCy-cy;
+if(ccx>-CAMP_R-200&&ccx<W+CAMP_R+200&&ccy>-CAMP_R-200&&ccy<H+CAMP_R+200){
+// Cleared ground (dirt circle)
+const dg=X.createRadialGradient(ccx,ccy,0,ccx,ccy,CAMP_R+20);
+dg.addColorStop(0,'#3a3020');dg.addColorStop(.7,'#342a1c');dg.addColorStop(1,'rgba(26,46,18,0)');
+X.fillStyle=dg;X.beginPath();X.arc(ccx,ccy,CAMP_R+20,0,PI2);X.fill();
+// Worn paths
+X.strokeStyle='rgba(80,65,40,.3)';X.lineWidth=12;
+X.beginPath();X.moveTo(ccx,ccy-CAMP_R-10);X.lineTo(ccx,ccy+CAMP_R+10);X.stroke();
+X.beginPath();X.moveTo(ccx-CAMP_R-10,ccy);X.lineTo(ccx+CAMP_R+10,ccy);X.stroke();
+
+// Palisade fence (sharpened log stakes in a circle)
+const nPoles=36,pR=CAMP_R;
+for(let i=0;i<nPoles;i++){
+// Gap for gate (south-facing)
+const pa=i/nPoles*PI2-Math.PI/2;
+if(pa>1.35&&pa<1.8)continue; // gate gap
+const px2=ccx+Math.cos(pa)*pR,py2=ccy+Math.sin(pa)*pR;
+X.save();X.translate(px2,py2);X.rotate(pa+Math.PI/2);
+// Stake: tall log, sharpened top
+X.fillStyle='#5a4020';X.fillRect(-4,-22,8,22);
+// Bark texture lines
+X.strokeStyle='#4a3518';X.lineWidth=.8;
+X.beginPath();X.moveTo(-2,-20);X.lineTo(-2,0);X.stroke();
+X.beginPath();X.moveTo(2,-18);X.lineTo(2,-2);X.stroke();
+// Sharpened tip
+X.fillStyle='#6a5030';X.beginPath();X.moveTo(-4,-22);X.lineTo(0,-32);X.lineTo(4,-22);X.closePath();X.fill();
+// Tip highlight
+X.fillStyle='#8a7050';X.beginPath();X.moveTo(-1,-24);X.lineTo(0,-32);X.lineTo(1,-24);X.closePath();X.fill();
+X.restore();}
+
+// Horizontal crossbeams on fence
+X.strokeStyle='#4a3518';X.lineWidth=3;
+for(let ring=0;ring<2;ring++){
+X.beginPath();
+const beamR=pR,beamY=-8-ring*10;
+for(let i=0;i<=nPoles;i++){
+const pa=i/nPoles*PI2-Math.PI/2;
+if(pa>1.3&&pa<1.85)continue;
+const bx=ccx+Math.cos(pa)*beamR,by=ccy+Math.sin(pa)*beamR+beamY;
+if(pa>1.3-.01&&pa<1.3+.01||i===0)X.moveTo(bx,by);
+else X.lineTo(bx,by);}
+X.stroke();}
+
+// Gate posts (two thick posts flanking the opening)
+for(let gs=-1;gs<=1;gs+=2){
+const ga=1.35+((gs+1)/2)*.45;const gpa=ga-Math.PI/2;
+// Wait, recalc: gate is at pa in [1.35,1.8]
+const gateA=(gs===-1?1.35:1.8)-Math.PI/2;
+const gx=ccx+Math.cos(gateA+Math.PI/2)*pR,gy=ccy+Math.sin(gateA+Math.PI/2)*pR;
+X.save();X.translate(gx,gy);
+X.fillStyle='#5a3c1e';X.fillRect(-6,-28,12,28);
+X.fillStyle='#6a4c2e';X.fillRect(-7,-30,14,5);
+X.restore();}
+
+// ── CABINS (3 log cabins arranged in camp) ──
+const cabins=[{dx:-70,dy:-50,w:60,h:40,a:0},{dx:50,dy:-40,w:50,h:35,a:.15},{dx:-30,dy:60,w:55,h:38,a:-.1}];
+for(const cab of cabins){
+const cbx=ccx+cab.dx,cby=ccy+cab.dy;
+X.save();X.translate(cbx,cby);X.rotate(cab.a);
+// Foundation
+X.fillStyle='#3a2a15';X.fillRect(-cab.w/2-3,-cab.h/2-3,cab.w+6,cab.h+6);
+// Walls (horizontal logs)
+for(let ly=0;ly<cab.h;ly+=5){
+X.fillStyle=ly%10<5?'#5a4025':'#4a3520';
+X.fillRect(-cab.w/2,-cab.h/2+ly,cab.w,5);}
+// Log end circles on corners
+X.fillStyle='#6a5030';
+for(let corner=0;corner<4;corner++){const cx2=(corner%2?1:-1)*cab.w/2,cy2=(corner<2?-1:1)*cab.h/2;
+X.beginPath();X.arc(cx2,cy2,4,0,PI2);X.fill();}
+// Door
+X.fillStyle='#2a1a0a';X.fillRect(-5,cab.h/2-10,10,10);
+X.fillStyle='#8a7040';X.fillRect(2,cab.h/2-6,2,2);
+// Roof (A-frame, darker)
+X.fillStyle='#3a2510';
+X.beginPath();X.moveTo(-cab.w/2-8,-cab.h/2-2);X.lineTo(0,-cab.h/2-16);X.lineTo(cab.w/2+8,-cab.h/2-2);X.closePath();X.fill();
+// Roof ridge line
+X.strokeStyle='#4a3520';X.lineWidth=2;
+X.beginPath();X.moveTo(0,-cab.h/2-16);X.lineTo(0,-cab.h/2-2);X.stroke();
+// Roof planks
+X.strokeStyle='rgba(60,40,20,.4)';X.lineWidth=.5;
+for(let rl=0;rl<4;rl++){const ry=-cab.h/2-4-rl*3;
+X.beginPath();X.moveTo(-cab.w/2-6+rl*2,ry);X.lineTo(cab.w/2+6-rl*2,ry);X.stroke();}
+// Window
+X.fillStyle='#1a3a2a';X.fillRect(-cab.w/2+8,-cab.h/2+8,8,8);
+X.strokeStyle='#5a4030';X.lineWidth=1;X.strokeRect(-cab.w/2+8,-cab.h/2+8,8,8);
+X.beginPath();X.moveTo(-cab.w/2+12,-cab.h/2+8);X.lineTo(-cab.w/2+12,-cab.h/2+16);X.stroke();
+X.beginPath();X.moveTo(-cab.w/2+8,-cab.h/2+12);X.lineTo(-cab.w/2+16,-cab.h/2+12);X.stroke();
+X.restore();}
+
+// Watchtower (elevated platform with ladder)
+const wtx=ccx+80,wty=ccy-70;
+X.save();X.translate(wtx,wty);
+// Four support posts
+X.fillStyle='#4a3518';
+for(let lp=0;lp<4;lp++){const lx=(lp%2?1:-1)*12,ly=(lp<2?-1:1)*12;
+X.fillRect(lx-2,-30,4,30);}
+// Platform
+X.fillStyle='#5a4025';X.fillRect(-16,-32,32,5);
+// Platform plank lines
+X.strokeStyle='#4a3518';X.lineWidth=.5;
+for(let pl=-14;pl<16;pl+=4){X.beginPath();X.moveTo(pl,-32);X.lineTo(pl,-27);X.stroke();}
+// Railing posts
+X.fillStyle='#5a4025';
+for(let rp=-1;rp<=1;rp+=2){X.fillRect(rp*14,-44,3,14);}
+// Railing crossbar
+X.fillRect(-15,-44,30,2);
+// Ladder
+X.fillStyle='#5a4025';X.fillRect(8,-28,2,28);X.fillRect(16,-28,2,28);
+for(let rung=0;rung<5;rung++)X.fillRect(8,-24+rung*5,10,2);
+X.restore();
+
+// Central campfire (larger than normal ones)
+const cfl=Math.sin(G.t/80)*.2+.8;
+const cfg=X.createRadialGradient(ccx,ccy,0,ccx,ccy,60*cfl);
+cfg.addColorStop(0,`rgba(255,160,40,${(.18*cfl).toFixed(2)})`);cfg.addColorStop(1,'rgba(255,80,0,0)');
+X.fillStyle=cfg;X.beginPath();X.arc(ccx,ccy,60*cfl,0,PI2);X.fill();
+// Fire pit stones
+X.fillStyle='#555';for(let s=0;s<8;s++){const sa=s/8*PI2;
+X.beginPath();X.arc(ccx+Math.cos(sa)*14,ccy+Math.sin(sa)*14,4,0,PI2);X.fill();}
+// Logs in fire
+X.fillStyle='#3a2510';X.save();X.translate(ccx,ccy);
+X.rotate(.4);X.fillRect(-12,-2,24,4);X.rotate(1.1);X.fillRect(-10,-2,20,4);X.restore();
+// Flames
+for(let f=0;f<5;f++){const fa=Math.sin(G.t/50+f*1.3)*4,fh=12+Math.sin(G.t/70+f*2)*5;
+X.fillStyle=f<3?`rgba(255,210,60,${(.8*cfl).toFixed(2)})`:`rgba(255,120,20,${(.6*cfl).toFixed(2)})`;
+X.beginPath();X.moveTo(ccx+fa-3+f*2,ccy+3);X.quadraticCurveTo(ccx+fa+f*1.2,ccy-fh,ccx+fa+3+f*2,ccy+3);X.fill();}
+
+// Barrel and crates
+X.fillStyle='#4a3520';X.fillRect(ccx-100,ccy+10,14,18);
+X.strokeStyle='#6a5030';X.lineWidth=1;X.strokeRect(ccx-100,ccy+10,14,18);
+X.strokeStyle='#888';X.beginPath();X.moveTo(ccx-100,ccy+15);X.lineTo(ccx-86,ccy+15);X.stroke();
+X.beginPath();X.moveTo(ccx-100,ccy+23);X.lineTo(ccx-86,ccy+23);X.stroke();
+// Crate
+X.fillStyle='#5a4528';X.fillRect(ccx+95,ccy-15,16,16);
+X.strokeStyle='#3a2a15';X.lineWidth=1;X.strokeRect(ccx+95,ccy-15,16,16);
+X.beginPath();X.moveTo(ccx+95,ccy-15);X.lineTo(ccx+111,ccy+1);X.stroke();
+X.beginPath();X.moveTo(ccx+111,ccy-15);X.lineTo(ccx+95,ccy+1);X.stroke();
+
+// "CAMP" label when player is near
+if(Math.hypot(G.p.x-mapCx,G.p.y-mapCy)<CAMP_R+100){
+X.font='10px monospace';X.fillStyle='rgba(200,180,120,.6)';X.textAlign='center';
+X.fillText('SAFE ZONE',ccx,ccy+CAMP_R+16);}
+}}
+
 // Obstacles
 for(const o of G.ob){const sx=o.x-cx,sy=o.y-cy;
 if(sx+o.w<-10||sx>W+10||sy+o.h<-10||sy>H+10)continue;
@@ -678,6 +927,30 @@ X.fillStyle='#1a1a10';X.fillRect(-10,-10,20,20);X.strokeStyle=l.c;X.lineWidth=1.
 drawLI(l);X.restore();
 if(Math.hypot(G.p.x-l.x,G.p.y-l.y)<45){X.fillStyle='#fff';X.globalAlpha=.8;X.font='10px monospace';X.textAlign='center';X.fillText('[E] '+l.l,sx,sy-20+bob);X.globalAlpha=1;}}
 
+// Wayfinder fragments
+for(const f of G.fragments){if(f.collected)continue;
+const sx=f.x-cx,sy=f.y-cy;
+if(sx<-60||sx>W+60||sy<-60||sy>H+60)continue;
+const bob=Math.sin(G.t/300+f.x)*.001*4;const rot=G.t/800;
+// Glow
+const gd=X.createRadialGradient(sx,sy,0,sx,sy,40);
+gd.addColorStop(0,'rgba(150,255,150,.15)');gd.addColorStop(1,'rgba(0,0,0,0)');
+X.fillStyle=gd;X.beginPath();X.arc(sx,sy,40,0,PI2);X.fill();
+// Crystal shape
+X.save();X.translate(sx,sy+bob);X.rotate(rot);
+X.fillStyle='#8f8';X.shadowColor='#af8';X.shadowBlur=15;
+X.beginPath();X.moveTo(0,-12);X.lineTo(8,0);X.lineTo(0,12);X.lineTo(-8,0);X.closePath();X.fill();
+X.fillStyle='#cfc';X.beginPath();X.moveTo(0,-12);X.lineTo(4,0);X.lineTo(0,4);X.lineTo(-4,0);X.closePath();X.fill();
+X.shadowBlur=0;X.restore();
+// Orbiting sparkles
+for(let s=0;s<3;s++){const sa=s/3*PI2+G.t/400;
+X.fillStyle='#af8';X.globalAlpha=.5+Math.sin(G.t/200+s)*.3;
+X.beginPath();X.arc(sx+Math.cos(sa)*18,sy+Math.sin(sa)*18,2,0,PI2);X.fill();}
+X.globalAlpha=1;
+// Label
+if(Math.hypot(G.p.x-f.x,G.p.y-f.y)<80){
+X.font='9px monospace';X.fillStyle='#af8';X.textAlign='center';X.fillText('WAYFINDER FRAGMENT',sx,sy-20);}}
+
 // Explosions
 for(const e of G.ex){const sx=e.x-cx,sy=e.y-cy,t=e.li/e.ml,r=e.r*(1.2-t*.2);
 const gd=X.createRadialGradient(sx,sy,0,sx,sy,r);
@@ -706,6 +979,64 @@ if(p.rl){const px=p.x-cx,py=p.y-cy,pct=Math.min(1,(G.t-p.rs)/WP[p.rw].rl);
 X.fillStyle='rgba(0,0,0,.6)';X.fillRect(px-25,py+p.sz+10,50,5);
 X.fillStyle='#ff0';X.fillRect(px-25,py+p.sz+10,50*pct,5);
 X.font='9px monospace';X.fillStyle='#ff0';X.textAlign='center';X.fillText('RELOADING',px,py+p.sz+28);}
+
+// ── LEVEL-UP ANIMATION ──
+if(G.lvAnim){
+const adt=Math.min(50,16);G.lvAnim.t+=adt;const la=G.lvAnim,prog=la.t/la.dur;
+if(prog<1){
+const px2=G.p.x-cx,py2=G.p.y-cy;
+// Expanding golden rings
+for(let r=0;r<3;r++){const rp=Math.max(0,(prog-r*.08)/(.85-r*.08));if(rp>1||rp<0)continue;
+X.strokeStyle='#4e8';X.lineWidth=4-r;X.globalAlpha=(1-rp)*.8;
+X.beginPath();X.arc(px2,py2,20+rp*140,0,PI2);X.stroke();}
+// Text floats up
+const tOff=prog*50;
+X.globalAlpha=Math.min(1,prog*5)*(1-Math.max(0,(prog-.6)/.4));
+X.font='bold 22px monospace';X.fillStyle='#4e8';X.textAlign='center';
+X.shadowColor='#4e8';X.shadowBlur=20;
+X.fillText('LVL '+la.lv,px2,py2-35-tOff);
+X.font='12px monospace';X.fillStyle='#8fc';
+X.fillText('+HP  +SPD',px2,py2-18-tOff);
+X.shadowBlur=0;
+// Sparkle ring
+for(let s=0;s<8;s++){const sa=s/8*PI2+prog*6;const sd=30+prog*80;
+X.fillStyle=s%2?'#fff':'#4e8';X.globalAlpha=(1-prog)*.7;
+X.beginPath();X.arc(px2+Math.cos(sa)*sd,py2+Math.sin(sa)*sd,2+Math.sin(prog*10+s)*1,0,PI2);X.fill();}
+X.globalAlpha=1;
+}else G.lvAnim=null;}
+
+// ── MAP EXPANSION NOTIFICATION ──
+if(G.expAnim){
+G.expAnim.t+=16;const ea=G.expAnim,prog=ea.t/ea.dur;
+if(prog<1){
+const fadeIn=Math.min(1,prog*4),fadeOut=prog>.7?1-(prog-.7)/.3:1,alpha=fadeIn*fadeOut;
+X.globalAlpha=alpha;
+const bw=420,bh=60,bx=W/2-bw/2,by=35;
+X.fillStyle='rgba(0,0,0,.65)';X.fillRect(bx,by,bw,bh);
+const bc=ea.zone===-1?'#af8':'#ff4';
+X.strokeStyle=bc;X.lineWidth=2;X.strokeRect(bx,by,bw,bh);
+X.strokeStyle=bc;X.lineWidth=1;X.globalAlpha=alpha*(.5+Math.sin(prog*20)*.3);
+X.beginPath();X.moveTo(bx+10,by+bh);X.lineTo(bx+bw-10,by+bh);X.stroke();
+X.globalAlpha=alpha;
+X.font='bold 18px monospace';X.fillStyle=bc;X.textAlign='center';
+X.shadowColor=bc;X.shadowBlur=12;
+if(ea.zone===-1){X.fillText('WAYFINDER COMPLETE',W/2,by+24);
+X.font='12px monospace';X.fillStyle='#8c8';X.shadowBlur=0;
+X.fillText('TEMPLE LOCATIONS NOW VISIBLE ON MAP',W/2,by+46);}
+else{X.fillText('ZONE '+(ea.zone+1)+' UNLOCKED',W/2,by+24);
+X.font='12px monospace';X.fillStyle='#cc8';X.shadowBlur=0;
+X.fillText('+'+[0,2,3,3][ea.zone]+' TEMPLES REVEALED  •  MAP EXPANDED',W/2,by+46);}
+X.globalAlpha=1;
+}else G.expAnim=null;}
+
+// ── SAFE ZONE INDICATOR ──
+if(inCamp(G.p.x,G.p.y)){
+const pulse=.6+Math.sin(G.t/400)*.2;
+X.globalAlpha=pulse;
+X.font='bold 14px monospace';X.fillStyle='#c8b478';X.textAlign='center';
+X.shadowColor='#c8b478';X.shadowBlur=8;
+X.fillText('⛺ CAMP — SAFE ZONE — HEALING',W/2,H-50);
+X.shadowBlur=0;X.globalAlpha=1;}
 
 drawMM();uHUD();uRitualUI();
 }
@@ -810,13 +1141,27 @@ X.fillStyle=l.c;X.globalAlpha=.9;X.fillRect(mx+dx*sc-1,my+dy*sc-1,2,2);}X.global
 // Enemies
 for(const e of G.en){const dx=e.x-px,dy=e.y-py;if(Math.hypot(dx,dy)>viewR)continue;
 X.fillStyle=e.bo?'#f0a':'#f44';const sz=Math.max(2,3);X.fillRect(mx+dx*sc-sz/2,my+dy*sc-sz/2,sz,sz);}
-// Temples
+// Camp on minimap
+{const cdx=mapCx-px,cdy=mapCy-py;
+if(Math.hypot(cdx,cdy)<viewR){const cx2=mx+cdx*sc,cy2=my+cdy*sc,cr=CAMP_R*sc;
+X.strokeStyle='rgba(180,150,80,.5)';X.lineWidth=1.5;X.beginPath();X.arc(cx2,cy2,cr,0,PI2);X.stroke();
+X.fillStyle='rgba(180,150,80,.15)';X.beginPath();X.arc(cx2,cy2,cr,0,PI2);X.fill();
+X.fillStyle='#c8b478';X.font='6px monospace';X.textAlign='center';X.fillText('CAMP',cx2,cy2+2);}}
+// Fragments on minimap (always visible)
+for(const f of G.fragments){if(f.collected)continue;
+const dx=f.x-px,dy=f.y-py;if(Math.hypot(dx,dy)>viewR)continue;
+const fx2=mx+dx*sc,fy2=my+dy*sc;
+X.fillStyle='#af8';X.globalAlpha=.6+Math.sin(G.t/200)*.3;
+X.beginPath();X.moveTo(fx2,fy2-4);X.lineTo(fx2+3,fy2);X.lineTo(fx2,fy2+4);X.lineTo(fx2-3,fy2);X.closePath();X.fill();X.globalAlpha=1;}
+// Temples (only visible on minimap after all fragments collected)
+const templeVis=G.fragCollected>=G.fragTotal;
+if(templeVis){
 for(const t of G.temples){const dx=t.x-px,dy=t.y-py,d=Math.hypot(dx,dy);
 if(d>viewR)continue;
 const tx=mx+dx*sc,ty=my+dy*sc;
 X.fillStyle=t.done?'#555':t.ritual.color;X.strokeStyle=t.done?'#444':t.ritual.color;X.lineWidth=1;
 X.beginPath();X.moveTo(tx,ty-5);X.lineTo(tx+4,ty);X.lineTo(tx,ty+5);X.lineTo(tx-4,ty);X.closePath();
-t.done?X.stroke():X.fill();}
+t.done?X.stroke():X.fill();}}
 // Waypoints
 for(const w of waypoints){const dx=w.x-px,dy=w.y-py;if(Math.hypot(dx,dy)>viewR)continue;
 const wx=mx+dx*sc,wy=my+dy*sc;
@@ -835,17 +1180,40 @@ X.font='7px monospace';X.fillStyle='#5a7a50';X.textAlign='center';X.fillText('N'
 // Seed label
 X.font='8px monospace';X.fillStyle='#3a5a30';X.textAlign='center';X.fillText('SEED: '+(G.seed||''),mx,my+R+12);
 
-// ── OFF-SCREEN INDICATORS (temples & waypoints beyond minimap) ──
-// Temples off-screen
+// ── OFF-SCREEN INDICATORS ──
+// Fragments off-screen (always visible)
+for(const f of G.fragments){if(f.collected)continue;
+const dx=f.x-px,dy=f.y-py,d=Math.hypot(dx,dy);
+if(d<=viewR)continue;
+const a=Math.atan2(dy,dx),ix=mx+Math.cos(a)*(R-2),iy=my+Math.sin(a)*(R-2);
+X.fillStyle='#af8';X.globalAlpha=.6+Math.sin(G.t/200)*.3;X.beginPath();
+X.moveTo(ix+Math.cos(a)*7,iy+Math.sin(a)*7);
+X.lineTo(ix+Math.cos(a+2.5)*4,iy+Math.sin(a+2.5)*4);
+X.lineTo(ix+Math.cos(a-2.5)*4,iy+Math.sin(a-2.5)*4);
+X.closePath();X.fill();X.globalAlpha=1;}
+// Fragment counter below minimap
+if(G.fragCollected<G.fragTotal){
+X.font='9px monospace';X.fillStyle='#af8';X.textAlign='center';
+X.fillText('FRAGMENTS: '+G.fragCollected+'/'+G.fragTotal,mx,my+R+22);}
+// Temple off-screen indicators (only after fragments completed)
+if(templeVis){
 for(const t of G.temples){if(t.done)continue;
 const dx=t.x-px,dy=t.y-py,d=Math.hypot(dx,dy);
-if(d<=viewR)continue; // already on minimap
+if(d<=viewR)continue;
 const a=Math.atan2(dy,dx),ix=mx+Math.cos(a)*(R-2),iy=my+Math.sin(a)*(R-2);
 X.fillStyle=t.ritual.color;X.beginPath();
 X.moveTo(ix+Math.cos(a)*8,iy+Math.sin(a)*8);
 X.lineTo(ix+Math.cos(a+2.5)*5,iy+Math.sin(a+2.5)*5);
 X.lineTo(ix+Math.cos(a-2.5)*5,iy+Math.sin(a-2.5)*5);
-X.closePath();X.fill();}
+X.closePath();X.fill();}}
+// Camp off-screen indicator
+{const cdx=mapCx-px,cdy=mapCy-py,cd=Math.hypot(cdx,cdy);
+if(cd>viewR){const a=Math.atan2(cdy,cdx),ix=mx+Math.cos(a)*(R-2),iy=my+Math.sin(a)*(R-2);
+X.fillStyle='#c8b478';X.globalAlpha=.7;X.beginPath();
+X.moveTo(ix+Math.cos(a)*7,iy+Math.sin(a)*7);
+X.lineTo(ix+Math.cos(a+2.5)*4,iy+Math.sin(a+2.5)*4);
+X.lineTo(ix+Math.cos(a-2.5)*4,iy+Math.sin(a-2.5)*4);
+X.closePath();X.fill();X.globalAlpha=1;}}
 // Waypoints off-screen (on main screen, not just minimap)
 for(const w of waypoints){
 const sx=w.x-G.cx,sy=w.y-G.cy;
@@ -881,6 +1249,9 @@ html+=`<div class="${has?'has':'lack'}">${has?'✓':'✗'} ${req.label}</div>`;}
 rr.innerHTML=html;
 rrw.textContent='REWARD: '+r.desc;rrw.style.color=r.color;
 ri.querySelector('.ri-title').textContent=r.name.toUpperCase();
+const tierLabels=['','MINOR','STRONG','GODLIKE'];
+const tierColors=['','#8a8','#fc4','#f44'];
+ri.querySelector('.ri-title').textContent=('★'.repeat(r.tier||1))+' '+r.name.toUpperCase();
 ri.querySelector('.ri-hint').style.color=canAfford(r)?'#4e8':'#644';
 }else ri.style.display='none';
 }
@@ -895,7 +1266,7 @@ document.getElementById('lv').textContent='LVL '+p.lv;
 const wn=document.getElementById('wn');wn.textContent=wd.n;wn.style.color=wd.c;
 document.getElementById('wd').textContent=wk==='pistol'?'∞':p.mg[wk]+' / '+p.am[wk];
 document.getElementById('wg').textContent='GRENADES: '+p.gr;
-document.getElementById('wv').textContent='WAVE '+G.wv;
+document.getElementById('wv').textContent='WAVE '+G.wv+' — ZONE '+(currentZone+1);
 document.getElementById('kc').textContent='KILLS: '+p.kl+' — SCORE: '+p.sc;
 // Active buffs display
 const bf=document.getElementById('BF');
