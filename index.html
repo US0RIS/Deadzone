@@ -161,7 +161,8 @@ let waypoints=[];
 const CAMP_R=180; // camp safe zone radius
 const LAND_CLAIM_R=250; // 5x wider diameter than the old claim radius
 function inCamp(x,y){return !G.campBroken&&Math.hypot(x-mapCx,y-mapCy)<CAMP_R;}
-function inVillage(x,y){for(const v of G.villages)if(Math.hypot(x-v.x,y-v.y)<v.r)return true;return false;}
+function inVillage(x,y){for(const v of G.villages)if(!v.broken&&v.wallHp>0&&Math.hypot(x-v.x,y-v.y)<v.r)return true;return false;}
+function inCampGateAngle(a){return a>1.3&&a<1.85;}
 
 // Ritual animation state
 let ritualAnim=null;
@@ -334,7 +335,7 @@ hp:60,mhp:60,sp:2.5,a:0,wc:r()*PI2});}
 // ── VILLAGES (1-2 safe zones with traders) ──
 for(let i=0;i<2;i++){const vp=randInMap(r);
 if(Math.hypot(vp.x-mapCx,vp.y-mapCy)<1500)continue;
-G.villages.push({x:vp.x,y:vp.y,r:160,name:i===0?'HAVEN':'OUTPOST'});}
+G.villages.push({x:vp.x,y:vp.y,r:160,name:i===0?'HAVEN':'OUTPOST',wallHp:450,wallMaxHp:450,broken:0});}
 addSupplies(r,12,12,0);
 // No temples activated at start (zone 0 has none)
 }
@@ -606,9 +607,8 @@ if(p.iv>0)p.iv-=dt;if(p.fl>0)p.fl-=dt;
 if(p.regen>0){p.hp=Math.min(p.mhp,p.hp+p.regen*dt/1000);}
 // Camp healing scales with rescued villagers
 if(inCamp(p.x,p.y)){p.hp=Math.min(p.mhp,p.hp+(2+G.campHealBoost)*dt/1000);}
-if(G.campRepairBoost>0&&G.campHp<G.campMaxHp){
-G.campHp=Math.min(G.campMaxHp,G.campHp+G.campRepairBoost*dt/1000);
-if(G.campBroken&&G.campHp>=G.campMaxHp*.35){G.campBroken=0;sMsg('CAMP WALLS REPAIRED!','#8c8');}}
+G.campBroken=0;
+G.campHp=G.campMaxHp;
 while(p.xp>=p.xn){p.xp-=p.xn;p.lv++;p.xn=Math.floor(100*Math.pow(1.3,p.lv-1));p.mhp+=10;p.hp=Math.min(p.hp+25,p.mhp);p.sp+=.05;
 G.lvAnim={t:0,dur:1200,lv:p.lv};
 for(let k=0;k<20;k++){const a=k/20*PI2;G.pt.push({x:p.x,y:p.y,vx:Math.cos(a)*3,vy:Math.sin(a)*3,li:600,ml:600,c:'#4e8',s:3+Math.random()*3});}
@@ -680,7 +680,9 @@ e.x+=nx*e.sp*dt/16;e.y+=ny*e.sp*dt/16;}
 if(inCamp(e.x,e.y)){const cdx=e.x-mapCx,cdy=e.y-mapCy,cd=Math.hypot(cdx,cdy)||1;
 e.x=mapCx+cdx/cd*(CAMP_R+5);e.y=mapCy+cdy/cd*(CAMP_R+5);}
 // Push enemies out of villages
-for(const v of G.villages){const vd=Math.hypot(e.x-v.x,e.y-v.y);
+for(const v of G.villages){
+if(v.broken||v.wallHp<=0)continue;
+const vd=Math.hypot(e.x-v.x,e.y-v.y)||1;
 if(vd<v.r){const vdx=e.x-v.x,vdy=e.y-v.y;e.x=v.x+vdx/vd*(v.r+5);e.y=v.y+vdy/vd*(v.r+5);}}
 for(const o of G.ob){const r=crr(e.x,e.y,e.sz,o.x,o.y,o.w,o.h);if(r){e.x=r.x;e.y=r.y;}}
 if(!fleeing&&dist<e.sz+p.sz+4&&e.at<=0&&!inCamp(p.x,p.y)){dmgP(Math.floor(e.dm*G.eDmgMul));e.at=800;}
@@ -690,11 +692,12 @@ for(let b=0;b<cnt;b++){const sa=e.a+(Math.random()-.5)*.16;
 G.b.push({x:e.x+Math.cos(e.a)*e.sz,y:e.y+Math.sin(e.a)*e.sz,vx:Math.cos(sa)*5,vy:Math.sin(sa)*5,d:Math.floor(e.dm*.4*G.eDmgMul),c:'#f44',s:4,li:800,fp:0});}
 e.sht=e.bo?1200:2000;}}
 if(!inBounds(e.x,e.y)){const c=clampToBounds(e.x,e.y);e.x=c.x;e.y=c.y;}}
-// ── Camp wall damage: enemies near camp damage walls ──
-if(!G.campBroken){
-for(const e of G.en){if(Math.hypot(e.x-mapCx,e.y-mapCy)<CAMP_R+40){
-G.campHp-=e.dm*.01;
-if(G.campHp<=0){G.campHp=0;G.campBroken=1;sMsg('CAMP WALLS HAVE FALLEN!','#f44');}}}}
+// ── Village wall damage: enemies batter village fences until they fail ──
+for(const v of G.villages){
+if(v.broken||v.wallHp<=0)continue;
+for(const e of G.en){if(Math.hypot(e.x-v.x,e.y-v.y)<v.r+30){
+v.wallHp-=e.dm*.01;
+if(v.wallHp<=0){v.wallHp=0;v.broken=1;sMsg(v.name+' WALLS HAVE FALLEN!','#f44');break;}}}}
 // ── Player-built wall damage ──
 for(const w of G.walls){if(w.hp<=0)continue;
 for(const e of G.en){if(Math.hypot(e.x-(w.x+w.w/2),e.y-(w.y+w.h/2))<40){
@@ -716,8 +719,15 @@ if(best){const ta=Math.atan2(best.y-b.y,best.x-b.x),ca=Math.atan2(b.vy,b.vx);
 let da=ta-ca;while(da>Math.PI)da-=PI2;while(da<-Math.PI)da+=PI2;
 const na=ca+da*.08,spd=Math.hypot(b.vx,b.vy);
 b.vx=Math.cos(na)*spd;b.vy=Math.sin(na)*spd;}}
+const ox=b.x,oy=b.y;
 b.x+=b.vx*tf;b.y+=b.vy*tf;b.li-=dt;
-let hit=0;for(const o of G.ob)if(!o.temple&&crc(b.x,b.y,b.s,o.x,o.y,o.w,o.h)){hit=1;break;}
+let hit=0;
+if(b.fp){
+const d0=Math.hypot(ox-mapCx,oy-mapCy),d1=Math.hypot(b.x-mapCx,b.y-mapCy);
+if(d0<CAMP_R-12&&d1>=CAMP_R-12){
+const mx=(ox+b.x)/2,my=(oy+b.y)/2,wa=Math.atan2(my-mapCy,mx-mapCx);
+if(!inCampGateAngle(wa)){hit=1;b.x=mx;b.y=my;}}}
+for(const o of G.ob)if(!o.temple&&crc(b.x,b.y,b.s,o.x,o.y,o.w,o.h)){hit=1;break;}
 if(b.li<=0||hit||!inBounds(b.x,b.y)){
 for(let k=0;k<2;k++)G.pt.push({x:b.x,y:b.y,vx:(Math.random()-.5)*4,vy:(Math.random()-.5)*4,li:150,ml:150,c:b.c,s:2});
 G.b.splice(i,1);continue;}
@@ -1000,15 +1010,6 @@ X.beginPath();X.moveTo(ccx+111,ccy-15);X.lineTo(ccx+95,ccy+1);X.stroke();
 if(Math.hypot(G.p.x-mapCx,G.p.y-mapCy)<CAMP_R+100){
 X.font='10px monospace';X.fillStyle='rgba(200,180,120,.6)';X.textAlign='center';
 X.fillText('SAFE ZONE',ccx,ccy+CAMP_R+16);}
-// Camp HP bar
-if(Math.hypot(G.p.x-mapCx,G.p.y-mapCy)<CAMP_R+200){
-const bw=100,bh=6,bx2=ccx-bw/2,by2=ccy-CAMP_R-20;
-X.fillStyle='rgba(0,0,0,.6)';X.fillRect(bx2,by2,bw,bh);
-X.fillStyle=G.campHp/G.campMaxHp>.5?'#8a6a3a':'#a44';
-X.fillRect(bx2,by2,bw*(G.campHp/G.campMaxHp),bh);
-X.font='7px monospace';X.fillStyle='#c8b478';X.textAlign='center';
-X.fillText('WALLS: '+Math.ceil(G.campHp)+'/'+G.campMaxHp,ccx,by2-3);
-if(G.campBroken){X.font='bold 12px monospace';X.fillStyle='#f44';X.fillText('WALLS BROKEN',ccx,by2-14);}}
 }}
 
 // ── VILLAGES ──
@@ -1019,12 +1020,22 @@ const vg=X.createRadialGradient(vsx,vsy,0,vsx,vsy,v.r);
 vg.addColorStop(0,'#3a3525');vg.addColorStop(1,'rgba(26,46,18,0)');
 X.fillStyle=vg;X.beginPath();X.arc(vsx,vsy,v.r,0,PI2);X.fill();
 // Fence
-X.strokeStyle='#5a4020';X.lineWidth=2;X.beginPath();X.arc(vsx,vsy,v.r-10,0,PI2);X.stroke();
+X.strokeStyle=v.broken?'#6a2a20':(v.wallHp/v.wallMaxHp>.5?'#5a4020':'#a44');
+X.lineWidth=2;if(v.broken)X.setLineDash([6,5]);
+X.beginPath();X.arc(vsx,vsy,v.r-10,0,PI2);X.stroke();
+if(v.broken)X.setLineDash([]);
 // Huts
 for(let h=0;h<3;h++){const ha=h/3*PI2+.5,hx=vsx+Math.cos(ha)*60,hy=vsy+Math.sin(ha)*60;
 X.fillStyle='#4a3520';X.fillRect(hx-15,hy-12,30,24);
 X.fillStyle='#3a2510';X.beginPath();X.moveTo(hx-18,hy-12);X.lineTo(hx,hy-24);X.lineTo(hx+18,hy-12);X.closePath();X.fill();}
-X.font='10px monospace';X.fillStyle='#8c8';X.textAlign='center';X.fillText(v.name,vsx,vsy+v.r+14);
+X.font='10px monospace';X.fillStyle=v.broken?'#d88':'#8c8';X.textAlign='center';X.fillText(v.name,vsx,vsy+v.r+14);
+if(Math.hypot(G.p.x-v.x,G.p.y-v.y)<v.r+70){
+const vbw=90,vbh=5,vbx=vsx-vbw/2,vby=vsy-v.r-28;
+X.fillStyle='rgba(0,0,0,.6)';X.fillRect(vbx,vby,vbw,vbh);
+X.fillStyle=v.broken?'#a44':(v.wallHp/v.wallMaxHp>.5?'#8a6a3a':'#a44');
+X.fillRect(vbx,vby,vbw*(v.wallHp/v.wallMaxHp),vbh);
+X.font='7px monospace';X.fillStyle='#c8b478';X.fillText('WALLS: '+Math.ceil(v.wallHp)+'/'+v.wallMaxHp,vsx,vby-3);
+if(v.broken){X.font='bold 10px monospace';X.fillStyle='#f66';X.fillText('WALLS BROKEN',vsx,vby-11);}}
 if(Math.hypot(G.p.x-v.x,G.p.y-v.y)<100){X.font='9px monospace';X.fillStyle='#af4';
 X.fillText(G.p.landClaimKit?'LAND CLAIM DEED READY':'[E] BUY — LAND CLAIM DEED (3 LOG + 5 STONE)',vsx,vsy-v.r-10);}}
 
@@ -1276,7 +1287,7 @@ X.fillText('⛺ CAMP — SAFE ZONE — HEAL '+(2+G.campHealBoost).toFixed(1)+'/S
 X.shadowBlur=0;X.globalAlpha=1;
 if(G.rescuedNpcs.length){
 X.font='10px monospace';X.fillStyle='#8c8';
-X.fillText('VILLAGERS: '+G.rescuedNpcs.length+' — WALL REPAIR '+G.campRepairBoost.toFixed(1)+'/S',W/2,H-34);}}
+X.fillText('VILLAGERS: '+G.rescuedNpcs.length+' — CAMP BONUSES ACTIVE',W/2,H-34);}}
 else if(inVillage(G.p.x,G.p.y)){
 X.font='bold 14px monospace';X.fillStyle='#8c8';X.textAlign='center';
 X.fillText('VILLAGE — SAFE ZONE',W/2,H-50);}
