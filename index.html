@@ -68,7 +68,7 @@ canvas{display:block}
 <div class=st>SURVIVE THE FOREST</div>
 <div style="margin-bottom:16px"><input id=seedIn type=text placeholder="SEED (blank=random)" style="background:rgba(20,25,20,.9);border:1px solid #543;color:#c96;padding:8px 16px;font:13px monospace;text-align:center;width:260px;letter-spacing:1px;outline:none" spellcheck=false></div>
 <button class=btn onclick=start()>ENTER</button>
-<div class=ci>WASD Move | Mouse Aim+Shoot | 1-5 Weapons<br>G Grenade | E Pickup | R Reload | SHIFT Sprint<br>F Perform Ritual | M Waypoint<br>Find 5 Wayfinder Fragments to reveal temples</div>
+<div class=ci>WASD Move | Mouse Aim+Shoot | 1-5 Weapons<br>G Grenade | E Interact/Pickup | R Reload | SHIFT Sprint<br>F Ritual | M Waypoint | B Build Wall | C Place Land Claim<br>Find 5 Fragments across the first zone to reveal temples<br>Rescue survivors, gather supplies, and buy the Elder&#39;s treasure map</div>
 </div>
 <div id=D>
 <div class=tt style="color:#a22">DEAD</div>
@@ -133,6 +133,7 @@ for(let i=0;i<[0,80,120,200][zone];i++){const p=randInMap(r);ftrees.push({x:p.x,
 for(let i=0;i<[0,30,40,60][zone];i++){const p=randInMap(r);cfires.push({x:p.x,y:p.y,ph:r()*PI2,sz:10+r()*8});}
 for(let i=0;i<[0,400,600,800][zone];i++){const p=randInMap(r);lpatch.push({x:p.x,y:p.y,s:8+r()*20,c:['#2a4a1a','#3a5a2a','#1a3a12','#4a6a2a','#2a3a18'][r()*5|0]});}
 for(let i=0;i<[0,300,400,500][zone];i++){const p=randInMap(r);deco.push({x:p.x,y:p.y,tp:r()*5|0,s:4+r()*8,v:r()});}
+addSupplies(r,[0,6,8,10][zone],[0,6,8,10][zone],[0,2800,6500,12500][zone]);
 // Unlock 2 temples per expansion
 unlockTemplesForZone(zone);
 }
@@ -158,7 +159,9 @@ let waypoints=[];
 
 // Camp (colonial settlement at map center)
 const CAMP_R=180; // camp safe zone radius
-function inCamp(x,y){return Math.hypot(x-mapCx,y-mapCy)<CAMP_R;}
+const LAND_CLAIM_R=250; // 5x wider diameter than the old claim radius
+function inCamp(x,y){return !G.campBroken&&Math.hypot(x-mapCx,y-mapCy)<CAMP_R;}
+function inVillage(x,y){for(const v of G.villages)if(Math.hypot(x-v.x,y-v.y)<v.r)return true;return false;}
 
 // Ritual animation state
 let ritualAnim=null;
@@ -184,6 +187,10 @@ const LT=[
 {t:'shotgun',l:'SHOTGUN',c:'#f80',ic:9,v:0},
 {t:'rifle',l:'RIFLE',c:'#f0f',ic:9,v:0},
 {t:'minigun',l:'MINIGUN',c:'#ff4',ic:9,v:0},
+{t:'log',l:'LOG',c:'#8a6a3a',ic:10,v:1},
+{t:'log',l:'LOG',c:'#8a6a3a',ic:10,v:1},
+{t:'stone',l:'STONE',c:'#999',ic:11,v:1},
+{t:'stone',l:'STONE',c:'#999',ic:11,v:1},
 ];
 
 // 32 RITUAL DEFINITIONS with tiers: 1=Minor, 2=Strong, 3=Godlike
@@ -246,18 +253,27 @@ p:{x:mapCx,y:mapCy,vx:0,vy:0,hp:100,mhp:100,a:0,sp:3.2,sz:14,
 w:['pistol'],cw:0,am:{smg:0,shotgun:0,rifle:0,minigun:0},gr:3,
 xp:0,xn:100,lv:1,kl:0,sc:0,lf:0,rl:0,rs:0,rw:null,
 mg:{smg:30,shotgun:6,rifle:10,minigun:100},iv:0,fl:0,fc:0,gc:0,wc:0,
-buffs:[],spdMul:1,dmgMul:1,drMul:1,frMul:1,lifesteal:0,regen:0,explode:0,
+buffs:[],buffTiers:[],spdMul:1,dmgMul:1,drMul:1,frMul:1,lifesteal:0,regen:0,explode:0,
 sprint:1.6,phase:0,marksman:0,fury:0,instantRld:0,chain:0,meteor:0,shrapnel:0,
-thorns:0,undying:0,pierce:0,homing:0,ricochet:0,infammo:0},
+thorns:0,undying:0,pierce:0,homing:0,ricochet:0,infammo:0,
+logs:0,stone:0,gold:0,treasureMap:0,landClaimKit:0,buildMode:0},
 b:[],en:[],lo:[],pt:[],gp:[],ex:[],dn:[],
 cx:0,cy:0,wv:1,wt:0,wl:0,st:0,t:0,ob:[],temples:[],
-pm:null,pmt:0,ehpMul:1,eSpdMul:1,eDmgMul:1,fear:0,lootMul:1,xpMul:1,scoreMul:1,seed};
+pm:null,pmt:0,ehpMul:1,eSpdMul:1,eDmgMul:1,fear:0,lootMul:1,xpMul:1,scoreMul:1,seed,
+campHp:500,campMaxHp:500,campBroken:0,
+npcs:[],rescuedNpcs:[],
+villages:[],supplies:[],
+campHealBoost:0,campRepairBoost:0,
+landClaim:null, // {x,y} or null
+walls:[], // player-built walls [{x,y,hp,mhp}]
+ritualSlots:0 // 0-6 points used (T1=1pt, T2=2pt, T3=3pt, max 3pts)
+};
 genWorld();
 sWave();
 }
 
 function genWorld(){
-G.ob=[];G.temples=[];G.allTemples=[];G.fragments=[];G.fragCollected=0;G.fragTotal=5;
+G.ob=[];G.temples=[];G.allTemples=[];G.fragments=[];G.fragCollected=0;G.fragTotal=5;G.supplies=[];
 deco=[];cfires=[];ftrees=[];lpatch=[];
 const r=sr;
 // Initial zone (zone 0) content
@@ -275,15 +291,15 @@ for(let i=0;i<60;i++){const p=randInMap(r);ftrees.push({x:p.x,y:p.y,a:r()*PI2,l:
 for(let i=0;i<20;i++){const p=randInMap(r);cfires.push({x:p.x,y:p.y,ph:r()*PI2,sz:10+r()*8});}
 for(let i=0;i<300;i++){const p=randInMap(r);lpatch.push({x:p.x,y:p.y,s:8+r()*20,c:['#2a4a1a','#3a5a2a','#1a3a12','#4a6a2a','#2a3a18'][r()*5|0]});}
 for(let i=0;i<200;i++){const p=randInMap(r);deco.push({x:p.x,y:p.y,tp:r()*5|0,s:4+r()*8,v:r()});}
-// ── WAYFINDER FRAGMENTS (5 in zone 0) ──
+// ── WAYFINDER FRAGMENTS (5 spread across zone 0 / first zone, NOT on minimap) ──
 for(let i=0;i<5;i++){
-let fx,fy;
-for(let a=0;a<50;a++){
-const ang=r()*PI2,dist=600+r()*1800;
-fx=mapCx+Math.cos(ang)*dist;fy=mapCy+Math.sin(ang)*dist;
-if(!inBounds(fx,fy))continue;
-let ok=1;for(const f of G.fragments)if(Math.hypot(fx-f.x,fy-f.y)<400){ok=0;break;}
-for(const o of G.ob)if(fx>o.x-30&&fx<o.x+o.w+30&&fy>o.y-30&&fy<o.y+o.h+30){ok=0;break;}
+let fx=mapCx,fy=mapCy;
+for(let a=0;a<100;a++){
+const p=randInMap(r);
+fx=p.x;fy=p.y;
+if(Math.hypot(fx-mapCx,fy-mapCy)<CAMP_R+80)continue;
+let ok=1;
+for(const f of G.fragments)if(Math.hypot(fx-f.x,fy-f.y)<450){ok=0;break;}
 if(ok)break;}
 G.fragments.push({x:fx,y:fy,collected:false});}
 // ── TEMPLES: tier-gated across zones 1-3 (no zone 0 temples) ──
@@ -309,6 +325,17 @@ for(const t of G.allTemples)if(Math.hypot(x-t.x,y-t.y)<2000){ok=0;break;}
 for(const o of G.ob)if(x>o.x-80&&x<o.x+o.w+80&&y>o.y-80&&y<o.y+o.h+80){ok=0;break;}
 if(ok)break;}
 G.allTemples.push({x,y,ritual:tc.ritual,done:false,glow:0,zone:tc.zone});}
+// ── NPCs (scattered survivors, 4-6 in zone 0-1) ──
+const npcNames=['SCOUT','MEDIC','HUNTER','TRADER','ELDER','SMITH'];
+for(let i=0;i<5;i++){const np=randInMap(r);
+if(Math.hypot(np.x-mapCx,np.y-mapCy)<CAMP_R+100)continue;
+G.npcs.push({x:np.x,y:np.y,name:npcNames[i%npcNames.length],following:false,rescued:false,
+hp:60,mhp:60,sp:2.5,a:0,wc:r()*PI2});}
+// ── VILLAGES (1-2 safe zones with traders) ──
+for(let i=0;i<2;i++){const vp=randInMap(r);
+if(Math.hypot(vp.x-mapCx,vp.y-mapCy)<1500)continue;
+G.villages.push({x:vp.x,y:vp.y,r:160,name:i===0?'HAVEN':'OUTPOST'});}
+addSupplies(r,12,12,0);
 // No temples activated at start (zone 0 has none)
 }
 function ptInPoly(x,y,poly){
@@ -322,6 +349,43 @@ for(const t of G.allTemples){
 if(t.zone===zone&&!G.temples.includes(t)){
 G.temples.push(t);
 G.ob.push({x:t.x-35,y:t.y-35,w:70,h:70,tp:3,temple:true});}}
+}
+
+function supplySpotOk(x,y){
+if(Math.hypot(x-mapCx,y-mapCy)<CAMP_R+120)return false;
+for(const v of G.villages)if(Math.hypot(x-v.x,y-v.y)<v.r+30)return false;
+for(const o of G.ob)if(x>o.x-20&&x<o.x+o.w+20&&y>o.y-20&&y<o.y+o.h+20)return false;
+for(const s of G.supplies)if(Math.hypot(x-s.x,y-s.y)<70)return false;
+return true;
+}
+function addSupplies(r,countLogs,countStone,minR){
+function place(tp){
+let sx=mapCx,sy=mapCy,ok=0;
+for(let a=0;a<120;a++){
+const p=randInMap(r);
+sx=p.x;sy=p.y;
+if(minR&&Math.hypot(sx-mapCx,sy-mapCy)<minR)continue;
+if(!supplySpotOk(sx,sy))continue;
+ok=1;break;}
+if(ok)G.supplies.push({x:sx,y:sy,t:tp,bo:r()*PI2});}
+for(let i=0;i<countLogs;i++)place('log');
+for(let i=0;i<countStone;i++)place('stone');
+}
+function rescueCampSpot(i){
+const a=-Math.PI/2+i*.95;
+return{x:mapCx+Math.cos(a)*90,y:mapCy+Math.sin(a)*90};
+}
+function rescueNpc(n){
+n.rescued=true;n.following=false;
+const idx=G.rescuedNpcs.length;
+const spot=rescueCampSpot(idx);
+n.x=spot.x;n.y=spot.y;n.homeX=spot.x;n.homeY=spot.y;n.a=Math.PI/2;
+G.rescuedNpcs.push(n.name);
+G.campMaxHp+=80;
+G.campHp=Math.min(G.campMaxHp,G.campHp+80);
+G.campHealBoost+=.75;
+G.campRepairBoost+=1.25;
+sMsg(n.name+' RESCUED! CAMP STRONGER ('+G.rescuedNpcs.length+' at camp)','#ff4');
 }
 
 function sWave(){G.wl=6+G.wv*3+Math.floor(G.wv*G.wv*.3);G.wt=0;G.st=0;}
@@ -364,7 +428,11 @@ if(r.t==='hp'&&p.hp<=r.n)return false;
 if(r.t==='ammo'&&(p.am[r.k]||0)<r.n)return false;
 if(r.t==='grenade'&&p.gr<r.n)return false;
 if(r.t==='gun'&&!p.w.includes(r.k))return false;
-}return true;
+}
+// Check ritual slot capacity: T1=1pt, T2=2pt, T3=3pt, max 3pts total
+const tier=ritual.tier||1;
+if(G.ritualSlots+tier>3)return false;
+return true;
 }
 
 function payRitual(ritual){
@@ -436,8 +504,8 @@ const p=G.p;let mx=0,my=0;
 if(K.w||K.arrowup)my--;if(K.s||K.arrowdown)my++;
 if(K.a||K.arrowleft)mx--;if(K.d||K.arrowright)mx++;
 if(mx||my){const l=Math.hypot(mx,my);mx/=l;my/=l;}
-const sp=K.shift?p.sprint:1;const tf=dt/16;
-p.vx=mx*p.sp*p.spdMul*sp;p.vy=my*p.sp*p.spdMul*sp;p.x+=p.vx*tf;p.y+=p.vy*tf;
+const sp=K.shift?p.sprint:1;const lcSpd=p._lcBuff?1.1:1;const tf=dt/16;
+p.vx=mx*p.sp*p.spdMul*sp*lcSpd;p.vy=my*p.sp*p.spdMul*sp*lcSpd;p.x+=p.vx*tf;p.y+=p.vy*tf;
 if(mx||my)p.wc+=dt*.012*sp*p.spdMul;
 if(!p.phase){for(const o of G.ob){const r=crr(p.x,p.y,p.sz,o.x,o.y,o.w,o.h);if(r){p.x=r.x;p.y=r.y;}}}
 else{for(const o of G.ob){if(o.temple){const r=crr(p.x,p.y,p.sz,o.x,o.y,o.w,o.h);if(r){p.x=r.x;p.y=r.y;}}}}
@@ -457,6 +525,8 @@ for(let i=1;i<=5;i++)if(K[i]&&i<=p.w.length&&p.cw!==i-1){p.cw=i-1;p.rl=0;}
 if(K.g&&p.gr>0&&!p.gc){p.gr--;p.gc=1;G.gp.push({x:p.x,y:p.y,vx:Math.cos(p.a)*8,vy:Math.sin(p.a)*8,tm:800});setTimeout(()=>p.gc=0,500);}
 // Pickup loot (E)
 if(K.e)for(let i=G.lo.length-1;i>=0;i--){const l=G.lo[i];if(Math.hypot(p.x-l.x,p.y-l.y)<40){pickup(l);G.lo.splice(i,1);break;}}
+// Gather camp supplies (E)
+if(K.e)for(let i=G.supplies.length-1;i>=0;i--){const s=G.supplies[i];if(Math.hypot(p.x-s.x,p.y-s.y)<42){pickup({t:s.t,v:1});G.supplies.splice(i,1);break;}}
 // Auto-collect wayfinder fragments (walk near)
 for(const f of G.fragments){if(!f.collected&&Math.hypot(p.x-f.x,p.y-f.y)<50){
 f.collected=true;G.fragCollected++;
@@ -468,8 +538,15 @@ G.expAnim={t:0,dur:2500,zone:-1};}}}
 if(K.f&&!p._ritualCd&&!ritualAnim){
 for(const t of G.temples){if(t.done)continue;
 if(Math.hypot(p.x-t.x,p.y-t.y)<80&&canAfford(t.ritual)){
+const tier=t.ritual.tier||1;
+// Higher tier replaces lower: if getting T2 and already have T1s, remove all T1s. T3 removes all.
+if(tier>=2){
+// Remove all lower-tier buffs
+for(let bi=p.buffTiers.length-1;bi>=0;bi--){
+if(p.buffTiers[bi]<tier){G.ritualSlots-=p.buffTiers[bi];p.buffTiers.splice(bi,1);p.buffs.splice(bi,1);}}
+}
+G.ritualSlots+=tier;p.buffTiers.push(tier);
 payRitual(t.ritual);t.done=true;
-// Start fullscreen ritual animation — game pauses
 startRitualAnim(t.ritual);
 p._ritualCd=1;setTimeout(()=>p._ritualCd=0,500);break;}}}
 // Waypoint (M)
@@ -479,11 +556,59 @@ if(existing>=0)waypoints.splice(existing,1);
 else if(waypoints.length<5)waypoints.push({x:p.x,y:p.y});
 else{waypoints.shift();waypoints.push({x:p.x,y:p.y});}
 p._waypointCd=1;setTimeout(()=>p._waypointCd=0,300);}
+// Toggle build mode (B)
+if(K.b&&!p._buildCd){p.buildMode=p.buildMode?0:1;sMsg(p.buildMode?'BUILD MODE — CLICK TO PLACE WALL':'BUILD MODE OFF',p.buildMode?'#c8b478':'#888');
+p._buildCd=1;setTimeout(()=>p._buildCd=0,300);}
+// Place wall on click in build mode
+if(p.buildMode&&M.d&&!p._placeCd){
+if(p.logs>=1&&p.stone>=2){
+const wx=G.cx+M.x,wy=G.cy+M.y;
+if(!inCamp(wx,wy)){
+p.logs--;p.stone-=2;
+G.walls.push({x:wx-20,y:wy-5,w:40,h:10,hp:500,mhp:500});
+G.ob.push({x:wx-20,y:wy-5,w:40,h:10,tp:4});
+sMsg('WALL PLACED','#c8b478');}}
+else sMsg('NEED 1 LOG + 2 STONE','#a44');
+p._placeCd=1;setTimeout(()=>p._placeCd=0,400);}
+// NPC interaction (E near NPC)
+if(K.e&&!p._npcCd){
+for(const n of G.npcs){if(n.rescued||n.following)continue;
+if(Math.hypot(p.x-n.x,p.y-n.y)<60){n.following=true;sMsg(n.name+' IS FOLLOWING YOU','#4e8');
+p._npcCd=1;setTimeout(()=>p._npcCd=0,500);break;}}
+// Check if following NPCs reached camp
+for(const n of G.npcs){if(n.following&&!n.rescued&&inCamp(n.x,n.y))rescueNpc(n);}}
+// Village trade (E near village center)
+if(K.e&&!p._tradeCd){
+for(const v of G.villages){if(Math.hypot(p.x-v.x,p.y-v.y)<80){
+if(p.landClaimKit)sMsg('LAND CLAIM DEED ALREADY READY — PRESS C TO PLACE','#af4');
+else if(p.logs>=3&&p.stone>=5){p.logs-=3;p.stone-=5;
+p.landClaimKit=1;sMsg('BOUGHT LAND CLAIM DEED — PRESS C TO PLACE','#af4');}
+else sMsg('NEED 3 LOGS + 5 STONE TO TRADE','#a44');
+p._tradeCd=1;setTimeout(()=>p._tradeCd=0,500);break;}}}
+// Place stored land claim (C)
+if(K.c&&!p._claimCd&&p.landClaimKit){
+G.landClaim={x:p.x,y:p.y};p.landClaimKit=0;
+sMsg('LAND CLAIM PLACED! +10% SPEED/HP/DMG IN AREA','#af4');
+p._claimCd=1;setTimeout(()=>p._claimCd=0,400);}
+// Elder trade (E near rescued Elder in camp)
+if(K.e&&!p._elderCd){
+for(const n of G.npcs){if(!n.rescued||n.name!=='ELDER')continue;
+if(Math.hypot(p.x-n.x,p.y-n.y)<60){
+if(p.treasureMap)sMsg('TREASURE MAP ALREADY PURCHASED','#fd0');
+else if(p.gold>=3){p.gold-=3;p.treasureMap=1;sMsg('TREASURE MAP PURCHASED — FRAGMENT ARROWS ACTIVE','#fd0');}
+else sMsg('NEED 3 GOLD','#a44');
+p._elderCd=1;setTimeout(()=>p._elderCd=0,500);break;}}}
+// Land claim buff
+if(G.landClaim&&Math.hypot(p.x-G.landClaim.x,p.y-G.landClaim.y)<LAND_CLAIM_R){
+p._lcBuff=1;}else p._lcBuff=0;
 if(p.iv>0)p.iv-=dt;if(p.fl>0)p.fl-=dt;
 // Regen
 if(p.regen>0){p.hp=Math.min(p.mhp,p.hp+p.regen*dt/1000);}
-// Camp healing (2 hp/sec while inside)
-if(inCamp(p.x,p.y)){p.hp=Math.min(p.mhp,p.hp+2*dt/1000);}
+// Camp healing scales with rescued villagers
+if(inCamp(p.x,p.y)){p.hp=Math.min(p.mhp,p.hp+(2+G.campHealBoost)*dt/1000);}
+if(G.campRepairBoost>0&&G.campHp<G.campMaxHp){
+G.campHp=Math.min(G.campMaxHp,G.campHp+G.campRepairBoost*dt/1000);
+if(G.campBroken&&G.campHp>=G.campMaxHp*.35){G.campBroken=0;sMsg('CAMP WALLS REPAIRED!','#8c8');}}
 while(p.xp>=p.xn){p.xp-=p.xn;p.lv++;p.xn=Math.floor(100*Math.pow(1.3,p.lv-1));p.mhp+=10;p.hp=Math.min(p.hp+25,p.mhp);p.sp+=.05;
 G.lvAnim={t:0,dur:1200,lv:p.lv};
 for(let k=0;k<20;k++){const a=k/20*PI2;G.pt.push({x:p.x,y:p.y,vx:Math.cos(a)*3,vy:Math.sin(a)*3,li:600,ml:600,c:'#4e8',s:3+Math.random()*3});}
@@ -495,7 +620,7 @@ function sRld(wk){const p=G.p;if(p.am[wk]<=0||p.mg[wk]>=WP[wk].m)return;p.rl=1;p
 
 function fire(wd,wk){
 const p=G.p;
-let dmg=Math.floor((wd.d+p.lv*.5)*p.dmgMul);
+let dmg=Math.floor((wd.d+p.lv*.5)*p.dmgMul*(p._lcBuff?1.1:1));
 if(p.marksman&&(wk==='pistol'||wk==='rifle'))dmg*=3;
 if(p.fury)dmg=Math.floor(dmg*(1+p.kl*.005));
 for(let i=0;i<wd.pl;i++){const sp=(Math.random()-.5)*wd.sp*2,a=p.a+sp;
@@ -509,6 +634,12 @@ const p=G.p;
 if(l.t==='health'){p.hp=Math.min(p.hp+l.v,p.mhp);sMsg('+'+l.v+' HP','#f44');}
 else if(l.t==='ammo'){for(const w of p.w)if(w!=='pistol')p.am[w]+=WP[w].m;sMsg('+AMMO ALL','#ff0');}
 else if(l.t==='grenade'){p.gr+=l.v;sMsg('+'+l.v+' GRENADES','#f80');}
+else if(l.t==='log'){p.logs+=l.v;sMsg('+LOG ('+p.logs+')','#8a6a3a');}
+else if(l.t==='stone'){
+let gainStone=0,gainGold=0;
+for(let i=0;i<l.v;i++)Math.random()<1/3?gainGold++:gainStone++;
+if(gainStone){p.stone+=gainStone;sMsg('+STONE ('+p.stone+')','#999');}
+if(gainGold){p.gold+=gainGold;sMsg('+GOLD ('+p.gold+')','#fd0');}}
 else{if(!p.w.includes(l.t)){p.w.push(l.t);p.am[l.t]=WP[l.t].m*3;p.mg[l.t]=WP[l.t].m;sMsg('NEW: '+WP[l.t].n,WP[l.t].c);}
 else{p.am[l.t]+=WP[l.t].m*2;sMsg('+AMMO ('+WP[l.t].n+')','#ff0');}}
 }
@@ -516,7 +647,7 @@ else{p.am[l.t]+=WP[l.t].m*2;sMsg('+AMMO ('+WP[l.t].n+')','#ff0');}}
 function sMsg(t,c){G.pm={t,c};G.pmt=2000;}
 
 function dmgP(amt){const p=G.p;if(p.iv>0)return;
-const actual=amt*p.drMul;p.hp-=actual;p.fl=200;p.iv=200;
+const actual=amt*p.drMul*(p._lcBuff?.9:1);p.hp-=actual;p.fl=200;p.iv=200;
 // Thorns: reflect damage to nearest enemy
 if(p.thorns>0){const ref=Math.floor(actual*p.thorns);
 let ne=null,nd=200;for(const e of G.en){const d=Math.hypot(e.x-p.x,e.y-p.y);if(d<nd){nd=d;ne=e;}}
@@ -548,6 +679,9 @@ e.x+=nx*e.sp*dt/16;e.y+=ny*e.sp*dt/16;}
 // Push enemies out of camp safe zone
 if(inCamp(e.x,e.y)){const cdx=e.x-mapCx,cdy=e.y-mapCy,cd=Math.hypot(cdx,cdy)||1;
 e.x=mapCx+cdx/cd*(CAMP_R+5);e.y=mapCy+cdy/cd*(CAMP_R+5);}
+// Push enemies out of villages
+for(const v of G.villages){const vd=Math.hypot(e.x-v.x,e.y-v.y);
+if(vd<v.r){const vdx=e.x-v.x,vdy=e.y-v.y;e.x=v.x+vdx/vd*(v.r+5);e.y=v.y+vdy/vd*(v.r+5);}}
 for(const o of G.ob){const r=crr(e.x,e.y,e.sz,o.x,o.y,o.w,o.h);if(r){e.x=r.x;e.y=r.y;}}
 if(!fleeing&&dist<e.sz+p.sz+4&&e.at<=0&&!inCamp(p.x,p.y)){dmgP(Math.floor(e.dm*G.eDmgMul));e.at=800;}
 if(e.at>0)e.at-=dt;
@@ -556,6 +690,20 @@ for(let b=0;b<cnt;b++){const sa=e.a+(Math.random()-.5)*.16;
 G.b.push({x:e.x+Math.cos(e.a)*e.sz,y:e.y+Math.sin(e.a)*e.sz,vx:Math.cos(sa)*5,vy:Math.sin(sa)*5,d:Math.floor(e.dm*.4*G.eDmgMul),c:'#f44',s:4,li:800,fp:0});}
 e.sht=e.bo?1200:2000;}}
 if(!inBounds(e.x,e.y)){const c=clampToBounds(e.x,e.y);e.x=c.x;e.y=c.y;}}
+// ── Camp wall damage: enemies near camp damage walls ──
+if(!G.campBroken){
+for(const e of G.en){if(Math.hypot(e.x-mapCx,e.y-mapCy)<CAMP_R+40){
+G.campHp-=e.dm*.01;
+if(G.campHp<=0){G.campHp=0;G.campBroken=1;sMsg('CAMP WALLS HAVE FALLEN!','#f44');}}}}
+// ── Player-built wall damage ──
+for(const w of G.walls){if(w.hp<=0)continue;
+for(const e of G.en){if(Math.hypot(e.x-(w.x+w.w/2),e.y-(w.y+w.h/2))<40){
+w.hp-=e.dm*.02;if(w.hp<=0){w.hp=0;sMsg('A WALL HAS BEEN DESTROYED','#a44');}}}}
+// ── NPC following AI ──
+for(const n of G.npcs){if(!n.following)continue;
+const ndx=G.p.x-n.x,ndy=G.p.y-n.y,nd=Math.hypot(ndx,ndy);
+if(nd>40){n.x+=ndx/nd*n.sp*1;n.y+=ndy/nd*n.sp*1;}
+n.a=Math.atan2(ndy,ndx);n.wc+=.02;}
 }
 
 function uBullets(dt){
@@ -852,7 +1000,75 @@ X.beginPath();X.moveTo(ccx+111,ccy-15);X.lineTo(ccx+95,ccy+1);X.stroke();
 if(Math.hypot(G.p.x-mapCx,G.p.y-mapCy)<CAMP_R+100){
 X.font='10px monospace';X.fillStyle='rgba(200,180,120,.6)';X.textAlign='center';
 X.fillText('SAFE ZONE',ccx,ccy+CAMP_R+16);}
+// Camp HP bar
+if(Math.hypot(G.p.x-mapCx,G.p.y-mapCy)<CAMP_R+200){
+const bw=100,bh=6,bx2=ccx-bw/2,by2=ccy-CAMP_R-20;
+X.fillStyle='rgba(0,0,0,.6)';X.fillRect(bx2,by2,bw,bh);
+X.fillStyle=G.campHp/G.campMaxHp>.5?'#8a6a3a':'#a44';
+X.fillRect(bx2,by2,bw*(G.campHp/G.campMaxHp),bh);
+X.font='7px monospace';X.fillStyle='#c8b478';X.textAlign='center';
+X.fillText('WALLS: '+Math.ceil(G.campHp)+'/'+G.campMaxHp,ccx,by2-3);
+if(G.campBroken){X.font='bold 12px monospace';X.fillStyle='#f44';X.fillText('WALLS BROKEN',ccx,by2-14);}}
 }}
+
+// ── VILLAGES ──
+for(const v of G.villages){const vsx=v.x-cx,vsy=v.y-cy;
+if(vsx<-v.r-100||vsx>W+v.r+100||vsy<-v.r-100||vsy>H+v.r+100)continue;
+// Ground
+const vg=X.createRadialGradient(vsx,vsy,0,vsx,vsy,v.r);
+vg.addColorStop(0,'#3a3525');vg.addColorStop(1,'rgba(26,46,18,0)');
+X.fillStyle=vg;X.beginPath();X.arc(vsx,vsy,v.r,0,PI2);X.fill();
+// Fence
+X.strokeStyle='#5a4020';X.lineWidth=2;X.beginPath();X.arc(vsx,vsy,v.r-10,0,PI2);X.stroke();
+// Huts
+for(let h=0;h<3;h++){const ha=h/3*PI2+.5,hx=vsx+Math.cos(ha)*60,hy=vsy+Math.sin(ha)*60;
+X.fillStyle='#4a3520';X.fillRect(hx-15,hy-12,30,24);
+X.fillStyle='#3a2510';X.beginPath();X.moveTo(hx-18,hy-12);X.lineTo(hx,hy-24);X.lineTo(hx+18,hy-12);X.closePath();X.fill();}
+X.font='10px monospace';X.fillStyle='#8c8';X.textAlign='center';X.fillText(v.name,vsx,vsy+v.r+14);
+if(Math.hypot(G.p.x-v.x,G.p.y-v.y)<100){X.font='9px monospace';X.fillStyle='#af4';
+X.fillText(G.p.landClaimKit?'LAND CLAIM DEED READY':'[E] BUY — LAND CLAIM DEED (3 LOG + 5 STONE)',vsx,vsy-v.r-10);}}
+
+// ── RESCUED CAMP RESIDENTS ──
+for(const n of G.npcs){if(!n.rescued)continue;
+const nsx=n.x-cx,nsy=n.y-cy;
+if(nsx<-30||nsx>W+30||nsy<-30||nsy>H+30)continue;
+X.fillStyle=n.name==='ELDER'?'#fd0':'#c8b478';X.beginPath();X.arc(nsx,nsy,8,0,PI2);X.fill();
+X.fillStyle='#3a2e18';X.beginPath();X.arc(nsx,nsy,6,0,PI2);X.fill();
+X.fillStyle='#fff';X.beginPath();X.arc(nsx+Math.cos(n.a)*3,nsy+Math.sin(n.a)*3,2,0,PI2);X.fill();
+X.font='8px monospace';X.fillStyle=n.name==='ELDER'?'#fd0':'#c8b478';X.textAlign='center';X.fillText(n.name,nsx,nsy-14);
+if(n.name==='ELDER'&&Math.hypot(G.p.x-n.x,G.p.y-n.y)<60){
+X.fillStyle=G.p.treasureMap?'#fd0':'#fff';X.font='9px monospace';
+X.fillText(G.p.treasureMap?'TREASURE MAP OWNED':'[E] TREASURE MAP (3 GOLD)',nsx,nsy-24);}}
+
+// ── NPCS ──
+for(const n of G.npcs){if(n.rescued)continue;
+const nsx=n.x-cx,nsy=n.y-cy;
+if(nsx<-30||nsx>W+30||nsy<-30||nsy>H+30)continue;
+// Body
+X.fillStyle=n.following?'#4e8':'#8cf';X.beginPath();X.arc(nsx,nsy,8,0,PI2);X.fill();
+X.fillStyle='#2a4a3a';X.beginPath();X.arc(nsx,nsy,6,0,PI2);X.fill();
+// Eyes
+X.fillStyle='#fff';X.beginPath();X.arc(nsx+Math.cos(n.a)*3,nsy+Math.sin(n.a)*3,2,0,PI2);X.fill();
+// Name
+X.font='8px monospace';X.fillStyle=n.following?'#4e8':'#8cf';X.textAlign='center';X.fillText(n.name,nsx,nsy-14);
+if(!n.following&&Math.hypot(G.p.x-n.x,G.p.y-n.y)<60){
+X.fillStyle='#fff';X.font='9px monospace';X.fillText('[E] RESCUE',nsx,nsy-24);}}
+
+// ── LAND CLAIM ──
+if(G.landClaim){const lcx=G.landClaim.x-cx,lcy=G.landClaim.y-cy;
+X.strokeStyle='rgba(170,255,100,.3)';X.lineWidth=2;X.setLineDash([6,4]);
+X.beginPath();X.arc(lcx,lcy,LAND_CLAIM_R,0,PI2);X.stroke();X.setLineDash([]);
+X.fillStyle='rgba(170,255,100,.05)';X.beginPath();X.arc(lcx,lcy,LAND_CLAIM_R,0,PI2);X.fill();}
+
+// ── PLAYER-BUILT WALLS ──
+for(const w of G.walls){if(w.hp<=0)continue;
+const wsx=w.x-cx,wsy=w.y-cy;
+if(wsx+w.w<-10||wsx>W+10||wsy+w.h<-10||wsy>H+10)continue;
+X.fillStyle='#5a4020';X.fillRect(wsx,wsy,w.w,w.h);
+X.strokeStyle='#3a2a10';X.lineWidth=1;X.strokeRect(wsx,wsy,w.w,w.h);
+// HP bar if damaged
+if(w.hp<w.mhp){X.fillStyle='rgba(0,0,0,.6)';X.fillRect(wsx,wsy-5,w.w,3);
+X.fillStyle=w.hp/w.mhp>.5?'#8a6a3a':'#a44';X.fillRect(wsx,wsy-5,w.w*(w.hp/w.mhp),3);}}
 
 // Obstacles
 for(const o of G.ob){const sx=o.x-cx,sy=o.y-cy;
@@ -865,7 +1081,8 @@ else if(o.tp===0){const rcx=sx+o.w/2,rcy=sy+o.h/2;X.fillStyle='#3a3a38';X.beginP
 X.fillStyle='rgba(60,100,40,.3)';X.beginPath();X.ellipse(rcx+o.w*.15,rcy+o.h*.15,o.w*.2,o.h*.15,.5,0,PI2);X.fill();}
 else if(o.tp===1){X.fillStyle='#2a2824';X.fillRect(sx,sy,o.w,o.h);X.strokeStyle='rgba(60,55,45,.4)';X.lineWidth=1;X.strokeRect(sx+2,sy+2,o.w-4,o.h-4);
 X.fillStyle='rgba(50,90,30,.3)';X.fillRect(sx,sy,o.w*.3,6);}
-// Skip temple collision boxes (tp===3) — they render separately below
+// Skip temple collision boxes (tp===3) and player walls (tp===4)
+if(o.tp===4)continue;
 }
 // ── TEMPLES ──
 for(const t of G.temples){
@@ -926,6 +1143,27 @@ X.shadowColor=l.c;X.shadowBlur=10;X.fillStyle=l.c;X.globalAlpha=.2;X.beginPath()
 X.fillStyle='#1a1a10';X.fillRect(-10,-10,20,20);X.strokeStyle=l.c;X.lineWidth=1.5;X.strokeRect(-10,-10,20,20);
 drawLI(l);X.restore();
 if(Math.hypot(G.p.x-l.x,G.p.y-l.y)<45){X.fillStyle='#fff';X.globalAlpha=.8;X.font='10px monospace';X.textAlign='center';X.fillText('[E] '+l.l,sx,sy-20+bob);X.globalAlpha=1;}}
+
+// Gatherable supplies
+for(const s of G.supplies){const sx=s.x-cx,sy=s.y-cy;
+if(sx<-40||sx>W+40||sy<-40||sy>H+40)continue;
+const bob=Math.sin(G.t/500+s.bo)*2;
+X.save();X.translate(sx,sy+bob);
+if(s.t==='log'){
+X.fillStyle='rgba(20,12,6,.35)';X.beginPath();X.ellipse(0,8,14,5,0,0,PI2);X.fill();
+X.fillStyle='#6a4a2a';X.fillRect(-12,-4,24,8);
+X.strokeStyle='#4a3218';X.lineWidth=1;X.strokeRect(-12,-4,24,8);
+X.beginPath();X.arc(-12,0,4,Math.PI/2,-Math.PI/2);X.stroke();
+X.beginPath();X.arc(12,0,4,-Math.PI/2,Math.PI/2);X.stroke();
+X.fillStyle='#8a6a3a';X.fillRect(-4,-3,8,6);
+}else{
+X.fillStyle='rgba(0,0,0,.25)';X.beginPath();X.ellipse(0,8,14,5,0,0,PI2);X.fill();
+X.fillStyle='#555';X.beginPath();X.arc(-7,2,5,0,PI2);X.arc(0,-2,6,0,PI2);X.arc(8,3,5,0,PI2);X.fill();
+X.fillStyle='#888';X.beginPath();X.arc(-5,0,2,0,PI2);X.arc(2,-4,2.5,0,PI2);X.arc(9,1,2,0,PI2);X.fill();}
+X.restore();
+if(Math.hypot(G.p.x-s.x,G.p.y-s.y)<48){
+X.fillStyle='#fff';X.font='10px monospace';X.textAlign='center';
+X.fillText(s.t==='log'?'[E] COLLECT LOG':'[E] GATHER STONE',sx,sy-18+bob);}}
 
 // Wayfinder fragments
 for(const f of G.fragments){if(f.collected)continue;
@@ -1032,11 +1270,44 @@ X.globalAlpha=1;
 // ── SAFE ZONE INDICATOR ──
 if(inCamp(G.p.x,G.p.y)){
 const pulse=.6+Math.sin(G.t/400)*.2;
-X.globalAlpha=pulse;
-X.font='bold 14px monospace';X.fillStyle='#c8b478';X.textAlign='center';
+X.globalAlpha=pulse;X.font='bold 14px monospace';X.fillStyle='#c8b478';X.textAlign='center';
 X.shadowColor='#c8b478';X.shadowBlur=8;
-X.fillText('⛺ CAMP — SAFE ZONE — HEALING',W/2,H-50);
-X.shadowBlur=0;X.globalAlpha=1;}
+X.fillText('⛺ CAMP — SAFE ZONE — HEAL '+(2+G.campHealBoost).toFixed(1)+'/S',W/2,H-50);
+X.shadowBlur=0;X.globalAlpha=1;
+if(G.rescuedNpcs.length){
+X.font='10px monospace';X.fillStyle='#8c8';
+X.fillText('VILLAGERS: '+G.rescuedNpcs.length+' — WALL REPAIR '+G.campRepairBoost.toFixed(1)+'/S',W/2,H-34);}}
+else if(inVillage(G.p.x,G.p.y)){
+X.font='bold 14px monospace';X.fillStyle='#8c8';X.textAlign='center';
+X.fillText('VILLAGE — SAFE ZONE',W/2,H-50);}
+// Treasure map fragment arrows
+if(G.p.treasureMap&&G.fragCollected<G.fragTotal){
+for(const f of G.fragments){if(f.collected)continue;
+const dx=f.x-G.p.x,dy=f.y-G.p.y,d=Math.hypot(dx,dy),a=Math.atan2(dy,dx);
+const sx=f.x-cx,sy=f.y-cy;
+if(sx>-20&&sx<W+20&&sy>-20&&sy<H+20){
+const ay=sy-26+Math.sin(G.t/120+f.x*.001)*3;
+X.fillStyle='#fd0';X.globalAlpha=.85;X.beginPath();
+X.moveTo(sx,ay);X.lineTo(sx-6,ay-10);X.lineTo(sx+6,ay-10);X.closePath();X.fill();
+}else{
+const edge=Math.min(W/2-28,H/2-28),ex=W/2+Math.cos(a)*edge,ey=H/2+Math.sin(a)*edge;
+X.fillStyle='#fd0';X.globalAlpha=.8;X.beginPath();
+X.moveTo(ex+Math.cos(a)*12,ey+Math.sin(a)*12);
+X.lineTo(ex+Math.cos(a+2.6)*8,ey+Math.sin(a+2.6)*8);
+X.lineTo(ex+Math.cos(a-2.6)*8,ey+Math.sin(a-2.6)*8);
+X.closePath();X.fill();
+X.font='9px monospace';X.textAlign='center';X.fillText(Math.floor(d/100)+'m',ex,ey+Math.sin(a)*14+12);}}
+X.globalAlpha=1;}
+// Build mode / land claim indicators
+if(G.p.landClaimKit){
+X.font='bold 12px monospace';X.fillStyle='#af4';X.textAlign='center';
+X.fillText('LAND CLAIM DEED READY — PRESS C TO PLACE',W/2,G.p.buildMode?H-86:H-70);}
+if(G.p.buildMode){
+X.font='bold 12px monospace';X.fillStyle='#c8b478';X.textAlign='center';
+X.fillText('BUILD MODE — CLICK TO PLACE WALL (1 LOG + 2 STONE)',W/2,H-70);
+// Ghost wall at cursor
+X.strokeStyle='rgba(200,180,120,.4)';X.lineWidth=1;
+X.strokeRect(M.x-20,M.y-5,40,10);}
 
 drawMM();uHUD();uRitualUI();
 }
@@ -1109,6 +1380,8 @@ else if(l.ic===3){X.fillStyle='#cc0';X.fillRect(-5,-4,10,8);X.fillStyle='#880';X
 else if(l.ic===4){X.fillStyle='#aa0';X.fillRect(-3,-6,6,12);X.fillStyle='#dd0';X.fillRect(-2,-4,4,2);X.fillRect(-2,0,4,2);}
 else if(l.ic===6){X.fillStyle='#555';X.beginPath();X.arc(0,0,5,0,PI2);X.fill();X.fillStyle='#f80';X.beginPath();X.arc(0,0,3,0,PI2);X.fill();}
 else if(l.ic===8){X.fillStyle='#640';X.fillRect(-2,-5,4,8);X.fillStyle='#f80';X.beginPath();X.moveTo(-1,-5);X.quadraticCurveTo(0,-9,1,-5);X.fill();}
+else if(l.ic===10){X.fillStyle='#6a4a2a';X.fillRect(-6,-2,12,4);X.strokeStyle='#4a3a1a';X.lineWidth=.5;X.beginPath();X.arc(-6,0,2,0,PI2);X.stroke();}
+else if(l.ic===11){X.fillStyle='#888';X.beginPath();X.moveTo(-4,3);X.lineTo(0,-5);X.lineTo(4,3);X.closePath();X.fill();X.fillStyle='#aaa';X.beginPath();X.moveTo(-2,1);X.lineTo(0,-3);X.lineTo(2,1);X.closePath();X.fill();}
 else{X.fillStyle=l.c;X.fillRect(-7,-1.5,14,3);X.fillRect(-3,1.5,3,4);}
 }
 
@@ -1147,12 +1420,20 @@ if(Math.hypot(cdx,cdy)<viewR){const cx2=mx+cdx*sc,cy2=my+cdy*sc,cr=CAMP_R*sc;
 X.strokeStyle='rgba(180,150,80,.5)';X.lineWidth=1.5;X.beginPath();X.arc(cx2,cy2,cr,0,PI2);X.stroke();
 X.fillStyle='rgba(180,150,80,.15)';X.beginPath();X.arc(cx2,cy2,cr,0,PI2);X.fill();
 X.fillStyle='#c8b478';X.font='6px monospace';X.textAlign='center';X.fillText('CAMP',cx2,cy2+2);}}
-// Fragments on minimap (always visible)
-for(const f of G.fragments){if(f.collected)continue;
-const dx=f.x-px,dy=f.y-py;if(Math.hypot(dx,dy)>viewR)continue;
-const fx2=mx+dx*sc,fy2=my+dy*sc;
-X.fillStyle='#af8';X.globalAlpha=.6+Math.sin(G.t/200)*.3;
-X.beginPath();X.moveTo(fx2,fy2-4);X.lineTo(fx2+3,fy2);X.lineTo(fx2,fy2+4);X.lineTo(fx2-3,fy2);X.closePath();X.fill();X.globalAlpha=1;}
+// Villages on minimap
+for(const v of G.villages){const dx=v.x-px,dy=v.y-py;if(Math.hypot(dx,dy)>viewR)continue;
+const vx2=mx+dx*sc,vy2=my+dy*sc,vr=v.r*sc;
+X.strokeStyle='rgba(120,200,120,.4)';X.lineWidth=1;X.beginPath();X.arc(vx2,vy2,vr,0,PI2);X.stroke();
+X.fillStyle='#8c8';X.font='5px monospace';X.textAlign='center';X.fillText(v.name,vx2,vy2+2);}
+// NPCs on minimap
+for(const n of G.npcs){if(n.rescued)continue;
+const dx=n.x-px,dy=n.y-py;if(Math.hypot(dx,dy)>viewR)continue;
+X.fillStyle=n.following?'#4e8':'#8cf';
+X.beginPath();X.arc(mx+dx*sc,my+dy*sc,2.5,0,PI2);X.fill();}
+// Land claim on minimap
+if(G.landClaim){const dx=G.landClaim.x-px,dy=G.landClaim.y-py;if(Math.hypot(dx,dy)<viewR){
+const lx=mx+dx*sc,ly=my+dy*sc;
+X.strokeStyle='rgba(170,255,100,.5)';X.lineWidth=1;X.beginPath();X.arc(lx,ly,LAND_CLAIM_R*sc,0,PI2);X.stroke();}}
 // Temples (only visible on minimap after all fragments collected)
 const templeVis=G.fragCollected>=G.fragTotal;
 if(templeVis){
@@ -1162,6 +1443,21 @@ const tx=mx+dx*sc,ty=my+dy*sc;
 X.fillStyle=t.done?'#555':t.ritual.color;X.strokeStyle=t.done?'#444':t.ritual.color;X.lineWidth=1;
 X.beginPath();X.moveTo(tx,ty-5);X.lineTo(tx+4,ty);X.lineTo(tx,ty+5);X.lineTo(tx-4,ty);X.closePath();
 t.done?X.stroke():X.fill();}}
+// Treasure map markers
+if(G.p.treasureMap){
+for(const f of G.fragments){if(f.collected)continue;
+const dx=f.x-px,dy=f.y-py,d=Math.hypot(dx,dy),a=Math.atan2(dy,dx);
+X.fillStyle='#fd0';
+if(d<=viewR){
+const fx=mx+dx*sc,fy=my+dy*sc;
+X.beginPath();X.moveTo(fx,fy-4);X.lineTo(fx+3,fy);X.lineTo(fx,fy+4);X.lineTo(fx-3,fy);X.closePath();X.fill();}
+else{
+const ix=mx+Math.cos(a)*(R-3),iy=my+Math.sin(a)*(R-3);
+X.beginPath();
+X.moveTo(ix+Math.cos(a)*5,iy+Math.sin(a)*5);
+X.lineTo(ix+Math.cos(a+2.5)*3.5,iy+Math.sin(a+2.5)*3.5);
+X.lineTo(ix+Math.cos(a-2.5)*3.5,iy+Math.sin(a-2.5)*3.5);
+X.closePath();X.fill();}}}
 // Waypoints
 for(const w of waypoints){const dx=w.x-px,dy=w.y-py;if(Math.hypot(dx,dy)>viewR)continue;
 const wx=mx+dx*sc,wy=my+dy*sc;
@@ -1181,20 +1477,13 @@ X.font='7px monospace';X.fillStyle='#5a7a50';X.textAlign='center';X.fillText('N'
 X.font='8px monospace';X.fillStyle='#3a5a30';X.textAlign='center';X.fillText('SEED: '+(G.seed||''),mx,my+R+12);
 
 // ── OFF-SCREEN INDICATORS ──
-// Fragments off-screen (always visible)
-for(const f of G.fragments){if(f.collected)continue;
-const dx=f.x-px,dy=f.y-py,d=Math.hypot(dx,dy);
-if(d<=viewR)continue;
-const a=Math.atan2(dy,dx),ix=mx+Math.cos(a)*(R-2),iy=my+Math.sin(a)*(R-2);
-X.fillStyle='#af8';X.globalAlpha=.6+Math.sin(G.t/200)*.3;X.beginPath();
-X.moveTo(ix+Math.cos(a)*7,iy+Math.sin(a)*7);
-X.lineTo(ix+Math.cos(a+2.5)*4,iy+Math.sin(a+2.5)*4);
-X.lineTo(ix+Math.cos(a-2.5)*4,iy+Math.sin(a-2.5)*4);
-X.closePath();X.fill();X.globalAlpha=1;}
-// Fragment counter below minimap
+// Fragment counter below minimap (no indicators - must explore to find)
 if(G.fragCollected<G.fragTotal){
 X.font='9px monospace';X.fillStyle='#af8';X.textAlign='center';
 X.fillText('FRAGMENTS: '+G.fragCollected+'/'+G.fragTotal,mx,my+R+22);}
+if(G.p.treasureMap&&G.fragCollected<G.fragTotal){
+X.font='8px monospace';X.fillStyle='#fd0';X.textAlign='center';
+X.fillText('TREASURE MAP ACTIVE',mx,my+R+34);}
 // Temple off-screen indicators (only after fragments completed)
 if(templeVis){
 for(const t of G.temples){if(t.done)continue;
@@ -1248,10 +1537,14 @@ if(req.t==='gun')has=p.w.includes(req.k);
 html+=`<div class="${has?'has':'lack'}">${has?'✓':'✗'} ${req.label}</div>`;}
 rr.innerHTML=html;
 rrw.textContent='REWARD: '+r.desc;rrw.style.color=r.color;
-ri.querySelector('.ri-title').textContent=r.name.toUpperCase();
+ri.querySelector('.ri-title').textContent=('★'.repeat(r.tier||1))+' '+r.name.toUpperCase();
 const tierLabels=['','MINOR','STRONG','GODLIKE'];
 const tierColors=['','#8a8','#fc4','#f44'];
 ri.querySelector('.ri-title').textContent=('★'.repeat(r.tier||1))+' '+r.name.toUpperCase();
+const slotCost=r.tier||1;
+const canFit=G.ritualSlots+slotCost<=3;
+const slotText=canFit?'SLOTS: '+G.ritualSlots+'/3 → '+(G.ritualSlots+slotCost)+'/3':'SLOTS FULL ('+G.ritualSlots+'/3)';
+ri.querySelector('.ri-hint').textContent=canAfford(r)?'[F] PERFORM RITUAL — '+slotText:slotText;
 ri.querySelector('.ri-hint').style.color=canAfford(r)?'#4e8':'#644';
 }else ri.style.display='none';
 }
@@ -1265,7 +1558,7 @@ document.querySelector('#xb>span').textContent=p.xp+'/'+p.xn;
 document.getElementById('lv').textContent='LVL '+p.lv;
 const wn=document.getElementById('wn');wn.textContent=wd.n;wn.style.color=wd.c;
 document.getElementById('wd').textContent=wk==='pistol'?'∞':p.mg[wk]+' / '+p.am[wk];
-document.getElementById('wg').textContent='GRENADES: '+p.gr;
+document.getElementById('wg').textContent='GRENADES: '+p.gr+' | LOG: '+p.logs+' | STONE: '+p.stone+' | GOLD: '+p.gold+(p.landClaimKit?' | CLAIM: READY':'');
 document.getElementById('wv').textContent='WAVE '+G.wv+' — ZONE '+(currentZone+1);
 document.getElementById('kc').textContent='KILLS: '+p.kl+' — SCORE: '+p.sc;
 // Active buffs display
