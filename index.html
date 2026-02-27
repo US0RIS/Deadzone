@@ -40,6 +40,23 @@ canvas{display:block}
 #RI .ri-reward{font-size:12px;color:#ff0;margin-top:6px;letter-spacing:1px}
 #RI .ri-hint{font-size:10px;color:#665;margin-top:4px}
 #BF{position:fixed;top:12px;right:200px;pointer-events:none;z-index:11;font-size:10px;color:#d4af37;line-height:1.5;text-align:right}
+#WX{position:fixed;top:50px;left:50%;transform:translateX(-50%);pointer-events:none;z-index:11;font-size:13px;color:#fff;text-align:center;letter-spacing:2px;text-shadow:0 0 8px rgba(0,0,0,.8);display:none}
+#QL{position:fixed;top:12px;right:12px;pointer-events:none;z-index:11;font-size:10px;color:#cc8;line-height:1.6;text-align:right;max-width:200px}
+.ql-title{font-size:9px;color:#996;letter-spacing:1px;margin-bottom:2px}
+.ql-item{color:#aa8}.ql-done{color:#4e8;text-decoration:line-through}
+.ql-prog{color:#686;font-size:9px}
+#EV{position:fixed;bottom:80px;right:12px;pointer-events:none;z-index:11;font-size:12px;color:#f80;text-align:right;display:none;text-shadow:0 0 8px rgba(0,0,0,.8)}
+#CP{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:60;background:rgba(8,12,8,.95);border:1px solid #3a5a20;padding:16px 20px;border-radius:4px;color:#ccc;font-size:11px;display:none;min-width:320px;max-height:80vh;overflow-y:auto}
+#CP .cp-title{font-size:16px;color:#4e8;letter-spacing:2px;margin-bottom:10px;text-align:center}
+#CP .cp-close{position:absolute;top:8px;right:12px;color:#888;cursor:pointer;font-size:14px}
+#CP .cp-item{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(60,80,40,.3)}
+#CP .cp-item:hover{background:rgba(60,80,40,.15)}
+#CP .cp-name{color:#9a8;font-size:12px}
+#CP .cp-cost{color:#886;font-size:10px}
+#CP .cp-btn{background:none;border:1px solid #3a5a20;color:#4e8;padding:3px 10px;cursor:pointer;font:10px monospace;letter-spacing:1px}
+#CP .cp-btn:hover{background:#3a5a20}
+#CP .cp-btn.disabled{color:#555;border-color:#333;cursor:default}
+#CP .cp-res{text-align:center;color:#aa8;font-size:10px;margin-bottom:8px;letter-spacing:1px}
 #RC{position:fixed;inset:0;z-index:50;pointer-events:none;display:none}
 </style>
 </head>
@@ -57,6 +74,15 @@ canvas{display:block}
 <div id=W><div id=wn>PISTOL</div><div id=wd>∞</div><div id=wg>GRENADES: 3</div></div>
 <div id=SL></div>
 <div id=BF></div>
+<div id=WX></div>
+<div id=QL></div>
+<div id=EV></div>
+<div id=CP>
+<div class=cp-title>⚒ CRAFTING</div>
+<div class=cp-close onclick="toggleCraft()">[ESC]</div>
+<div class=cp-res id=cpRes></div>
+<div id=cpList></div>
+</div>
 <div id=RI>
 <div class=ri-title>ANCIENT TEMPLE</div>
 <div class=ri-req id=rr></div>
@@ -68,7 +94,7 @@ canvas{display:block}
 <div class=st>SURVIVE THE FOREST</div>
 <div style="margin-bottom:16px"><input id=seedIn type=text placeholder="SEED (blank=random)" style="background:rgba(20,25,20,.9);border:1px solid #543;color:#c96;padding:8px 16px;font:13px monospace;text-align:center;width:260px;letter-spacing:1px;outline:none" spellcheck=false></div>
 <button class=btn onclick=start()>ENTER</button>
-<div class=ci>WASD Move | Mouse Aim+Shoot | 1-5 Weapons<br>G Grenade | E Interact/Pickup | R Reload | SHIFT Sprint<br>F Ritual | M Waypoint | B Build Wall | C Place Land Claim<br>Find 5 Fragments across the first zone to reveal temples<br>Rescue survivors, gather supplies, and buy the Elder&#39;s treasure map</div>
+<div class=ci>WASD Move | Mouse Aim+Shoot | 1-5 Weapons<br>G Grenade | E Interact/Pickup | R Reload | SHIFT Sprint<br>F Ritual | M Waypoint | B Build Wall | C Place Land Claim<br>Q Crafting Panel | Find 5 Fragments to reveal temples<br>Rescue survivors, gather supplies, and buy the Elder&#39;s treasure map</div>
 </div>
 <div id=D>
 <div class=tt style="color:#a22">DEAD</div>
@@ -242,6 +268,73 @@ const ET=[
 {n:'abom',h:1200,s:.5,z:46,bc:'#623',ec:'#f00',d:50,xp:300,sc:500,lg:6,sh:1,bo:1,sk:1}
 ];
 
+// ══════ CRAFTING RECIPES ══════
+const CRAFTS=[
+{name:'STIM KIT',desc:'+50 HP',cost:{logs:1,stone:0,gold:0},effect:p=>{p.hp=Math.min(p.mhp,p.hp+50);sMsg('+50 HP','#f44');}},
+{name:'MOLOTOV x2',desc:'2 Fire grenades',cost:{logs:2,stone:0,gold:0},effect:p=>{p.gr+=2;sMsg('+2 GRENADES','#f80');}},
+{name:'ARMOR PATCH',desc:'-15% DMG for 30s',cost:{logs:0,stone:2,gold:0},effect:p=>{p._armorPatch=30000;sMsg('ARMOR PATCH ACTIVE','#88f');}},
+{name:'AMMO BOX',desc:'Refill all ammo',cost:{logs:0,stone:1,gold:1},effect:p=>{for(const w of p.w)if(w!=='pistol')p.am[w]+=WP[w].m*2;sMsg('+AMMO ALL','#ff0');}},
+{name:'WALL KIT x3',desc:'3 quick walls',cost:{logs:3,stone:3,gold:0},effect:p=>{for(let i=0;i<3;i++){const a=p.a+((i-1)*.8),d=60;const wx=p.x+Math.cos(a)*d-20,wy=p.y+Math.sin(a)*d-5;G.walls.push({x:wx,y:wy,w:40,h:10,hp:500,mhp:500});G.ob.push({x:wx,y:wy,w:40,h:10,tp:4});}sMsg('3 WALLS PLACED','#c8b478');}},
+{name:'ENEMY TRACKER',desc:'Show enemies on map 45s',cost:{logs:0,stone:1,gold:1},effect:p=>{G._tracker=45000;sMsg('ENEMY TRACKER ACTIVE','#f44');}},
+{name:'ADRENALINE SHOT',desc:'+50% speed 20s',cost:{logs:1,stone:1,gold:0},effect:p=>{p._adrenaline=20000;sMsg('ADRENALINE RUSH!','#ff0');}},
+{name:'FRAG CRATE',desc:'+5 grenades',cost:{logs:1,stone:2,gold:0},effect:p=>{p.gr+=5;sMsg('+5 GRENADES','#f80');}},
+{name:'MED STATION',desc:'Regen 5HP/s for 20s',cost:{logs:2,stone:1,gold:1},effect:p=>{p._medStation=20000;sMsg('MED STATION ACTIVE','#4f4');}},
+{name:'LANDMINE x3',desc:'3 mines at feet',cost:{logs:0,stone:3,gold:1},effect:p=>{for(let i=0;i<3;i++){const a=i/3*PI2;G._mines=G._mines||[];G._mines.push({x:p.x+Math.cos(a)*40,y:p.y+Math.sin(a)*40,r:60,dmg:120});}sMsg('3 LANDMINES PLACED','#fa0');}},
+];
+let craftOpen=0;
+
+// ══════ QUEST DEFINITIONS ══════
+const QUEST_DEFS=[
+{id:'kill10',desc:'Kill 10 enemies',check:()=>G.p.kl>=10,xp:50,gold:1,next:'kill50'},
+{id:'kill50',desc:'Kill 50 enemies',check:()=>G.p.kl>=50,xp:150,gold:2,next:'kill200'},
+{id:'kill200',desc:'Kill 200 enemies',check:()=>G.p.kl>=200,xp:500,gold:5,next:null},
+{id:'wave5',desc:'Reach wave 5',check:()=>G.wv>=5,xp:80,gold:1,next:'wave10'},
+{id:'wave10',desc:'Reach wave 10',check:()=>G.wv>=10,xp:200,gold:3,next:'wave20'},
+{id:'wave20',desc:'Reach wave 20',check:()=>G.wv>=20,xp:600,gold:5,next:null},
+{id:'frags',desc:'Collect all fragments',check:()=>G.fragCollected>=G.fragTotal,xp:200,gold:3,next:null},
+{id:'ritual1',desc:'Perform a ritual',check:()=>G.ritualSlots>=1,xp:100,gold:2,next:null},
+{id:'craft1',desc:'Craft an item',check:()=>(G._craftCount||0)>=1,xp:60,gold:1,next:'craft5'},
+{id:'craft5',desc:'Craft 5 items',check:()=>(G._craftCount||0)>=5,xp:150,gold:2,next:null},
+{id:'rescue1',desc:'Rescue a survivor',check:()=>G.rescuedNpcs.length>=1,xp:80,gold:1,next:'rescue3'},
+{id:'rescue3',desc:'Rescue 3 survivors',check:()=>G.rescuedNpcs.length>=3,xp:200,gold:3,next:null},
+{id:'boss1',desc:'Defeat the Warden',check:()=>(G._bossesKilled||0)>=1,xp:300,gold:3,next:'boss2'},
+{id:'boss2',desc:'Defeat the Leviathan',check:()=>(G._bossesKilled||0)>=2,xp:500,gold:5,next:'boss3'},
+{id:'boss3',desc:'Defeat the Archfiend',check:()=>(G._bossesKilled||0)>=3,xp:1000,gold:10,next:null},
+];
+
+// ══════ WEATHER SYSTEM ══════
+const WEATHERS=[
+{name:'CLEAR',color:'#9a8',dur:[25000,65000],effect:'none'},
+{name:'🌫 DENSE FOG',color:'#aaa',dur:[25000,50000],effect:'fog'},
+{name:'🩸 BLOOD MOON',color:'#f44',dur:[25000,45000],effect:'bloodmoon'},
+{name:'⚡ LIGHTNING STORM',color:'#4af',dur:[25000,55000],effect:'lightning'},
+{name:'🌧 RAIN',color:'#68a',dur:[30000,65000],effect:'rain'},
+{name:'🔥 HEAT WAVE',color:'#fa0',dur:[25000,50000],effect:'heatwave'},
+];
+
+// ══════ BOSS DEFINITIONS ══════
+const BOSSES=[
+{wave:6,name:'THE WARDEN',hp:3000,sz:48,bc:'#864',ec:'#ff0',spd:.7,dmg:40,xp:500,sc:1000,
+ phases:[{at:.75,msg:'WARDEN ENRAGES!',spdMul:1.5,dmgMul:1.3},{at:.35,msg:'WARDEN GOES BERSERK!',spdMul:2,dmgMul:1.8}],
+ abilities:['slam','summon'],dropGold:5,dropAmmo:3},
+{wave:12,name:'THE LEVIATHAN',hp:8000,sz:60,bc:'#468',ec:'#0ff',spd:.5,dmg:60,xp:1200,sc:3000,
+ phases:[{at:.6,msg:'LEVIATHAN SHIELDS UP!',shield:3000},{at:.25,msg:'LEVIATHAN FINAL FURY!',spdMul:2.5,dmgMul:2}],
+ abilities:['slam','summon','shield'],dropGold:8,dropAmmo:5},
+{wave:18,name:'THE ARCHFIEND',hp:18000,sz:72,bc:'#824',ec:'#f00',spd:.6,dmg:90,xp:3000,sc:8000,
+ phases:[{at:.7,msg:'ARCHFIEND SUMMONS HORDE!'},{at:.4,msg:'ARCHFIEND DEATH SHIELD!',shield:5000},{at:.15,msg:'ARCHFIEND GOES BERSERK!',spdMul:3,dmgMul:2.5}],
+ abilities:['slam','summon','shield','aoe'],dropGold:15,dropAmmo:8},
+];
+
+// ══════ DYNAMIC EVENTS ══════
+const EVENTS=[
+{name:'⚠ HORDE WAVE',color:'#f44',dur:30000,effect:'horde'},
+{name:'📦 AIRDROP INCOMING',color:'#4e8',dur:15000,effect:'airdrop'},
+{name:'💀 BERSERKER SPAWNED',color:'#f80',dur:0,effect:'berserker'},
+{name:'💰 BURIED TREASURE',color:'#fd0',dur:20000,effect:'treasure'},
+{name:'👻 ANCIENT CURSE',color:'#a4f',dur:15000,effect:'curse'},
+{name:'🏕 CAMP RALLY',color:'#4e8',dur:20000,effect:'rally'},
+];
+
 let G,K={},M={x:0,y:0,d:0},run=0;
 let deco,cfires,ftrees,lpatch;
 
@@ -267,7 +360,15 @@ villages:[],supplies:[],
 campHealBoost:0,campRepairBoost:0,
 landClaim:null, // {x,y} or null
 walls:[], // player-built walls [{x,y,hp,mhp}]
-ritualSlots:0 // 0-6 points used (T1=1pt, T2=2pt, T3=3pt, max 3pts)
+ritualSlots:0, // 0-6 points used (T1=1pt, T2=2pt, T3=3pt, max 3pts)
+// New systems
+weather:{state:0,timer:10000,lightningT:0,rainParts:[]},
+boss:null, // active boss enemy ref
+_bossesKilled:0,_bossSpawned:[],
+quests:[],questsDone:[],
+_craftCount:0,
+event:{active:null,timer:0,nextEvent:25000,airdrop:null,treasure:null,cursed:0,rally:0},
+_tracker:0,_mines:[],
 };
 genWorld();
 sWave();
@@ -338,6 +439,11 @@ if(Math.hypot(vp.x-mapCx,vp.y-mapCy)<1500)continue;
 G.villages.push({x:vp.x,y:vp.y,r:160,name:i===0?'HAVEN':'OUTPOST',wallHp:450,wallMaxHp:450,broken:0});}
 addSupplies(r,12,12,0);
 // No temples activated at start (zone 0 has none)
+// Init quests
+G.quests=['kill10','wave5','frags','ritual1','craft1','rescue1','boss1'];
+G.questsDone=[];
+// Init weather
+G.weather={state:0,timer:8000+Math.random()*5000,lightningT:0,rainParts:[]};
 }
 function ptInPoly(x,y,poly){
 let inside=false;
@@ -414,7 +520,7 @@ sht:t.sh?0:-1,lg:t.lg,ar:t.ar,bo:t.bo,sk:t.sk,wc:Math.random()*PI2,hf:0});
 function crc(cx,cy,cr,rx,ry,rw,rh){const nx=Math.max(rx,Math.min(cx,rx+rw)),ny=Math.max(ry,Math.min(cy,ry+rh)),dx=cx-nx,dy=cy-ny;return dx*dx+dy*dy<cr*cr;}
 function crr(cx,cy,cr,rx,ry,rw,rh){const nx=Math.max(rx,Math.min(cx,rx+rw)),ny=Math.max(ry,Math.min(cy,ry+rh)),dx=cx-nx,dy=cy-ny,d=Math.hypot(dx,dy);if(d<cr&&d>0){const o=cr-d;return{x:cx+dx/d*o,y:cy+dy/d*o};}return null;}
 
-onkeydown=e=>{K[e.key.toLowerCase()]=1;if(e.key==='Tab')e.preventDefault();};
+onkeydown=e=>{K[e.key.toLowerCase()]=1;if(e.key==='Tab')e.preventDefault();if(e.key.toLowerCase()==='q'){toggleCraft();e.preventDefault();}if(e.key==='Escape'&&craftOpen){toggleCraft();e.preventDefault();}};
 onkeyup=e=>{K[e.key.toLowerCase()]=0;};
 onmousemove=e=>{M.x=e.clientX;M.y=e.clientY;};
 onmousedown=e=>{if(!e.button)M.d=1;};
@@ -505,15 +611,15 @@ const p=G.p;let mx=0,my=0;
 if(K.w||K.arrowup)my--;if(K.s||K.arrowdown)my++;
 if(K.a||K.arrowleft)mx--;if(K.d||K.arrowright)mx++;
 if(mx||my){const l=Math.hypot(mx,my);mx/=l;my/=l;}
-const sp=K.shift?p.sprint:1;const lcSpd=p._lcBuff?1.1:1;const tf=dt/16;
-p.vx=mx*p.sp*p.spdMul*sp*lcSpd;p.vy=my*p.sp*p.spdMul*sp*lcSpd;p.x+=p.vx*tf;p.y+=p.vy*tf;
+const sp=K.shift?p.sprint:1;const lcSpd=p._lcBuff?1.1:1;const adrenSpd=p._adrenaline>0?1.5:1;const rallySpd=G.event.rally?1.5:1;const tf=dt/16;
+p.vx=mx*p.sp*p.spdMul*sp*lcSpd*adrenSpd*rallySpd;p.vy=my*p.sp*p.spdMul*sp*lcSpd*adrenSpd*rallySpd;p.x+=p.vx*tf;p.y+=p.vy*tf;
 if(mx||my)p.wc+=dt*.012*sp*p.spdMul;
 if(!p.phase){for(const o of G.ob){const r=crr(p.x,p.y,p.sz,o.x,o.y,o.w,o.h);if(r){p.x=r.x;p.y=r.y;}}}
 else{for(const o of G.ob){if(o.temple){const r=crr(p.x,p.y,p.sz,o.x,o.y,o.w,o.h);if(r){p.x=r.x;p.y=r.y;}}}}
 if(!inBounds(p.x,p.y)){const c=clampToBounds(p.x,p.y);p.x=c.x;p.y=c.y;}
 p.a=Math.atan2(M.y-(p.y-G.cy),M.x-(p.x-G.cx));
 const wk=p.w[p.cw],wd=WP[wk],now=G.t;
-const effectiveRate=wd.r/p.frMul;
+const effectiveRate=wd.r/p.frMul*(WEATHERS[G.weather.state].effect==='rain'?1.6:1);
 if(M.d&&!p.rl&&(wd.au||!p.fc)){if(now-p.lf>=effectiveRate){
 const hasAmmo=wk==='pistol'||p.infammo||p.mg[wk]>0;
 if(hasAmmo){fire(wd,wk);p.lf=now;if(wk!=='pistol'&&!p.infammo)p.mg[wk]--;if(!wd.au)p.fc=1;}
@@ -603,10 +709,11 @@ p._elderCd=1;setTimeout(()=>p._elderCd=0,500);break;}}}
 if(G.landClaim&&Math.hypot(p.x-G.landClaim.x,p.y-G.landClaim.y)<LAND_CLAIM_R){
 p._lcBuff=1;}else p._lcBuff=0;
 if(p.iv>0)p.iv-=dt;if(p.fl>0)p.fl-=dt;
-// Regen
-if(p.regen>0){p.hp=Math.min(p.mhp,p.hp+p.regen*dt/1000);}
+// Regen (nerfed by heat wave)
+const heatNerf=WEATHERS[G.weather.state].effect==='heatwave'?0.3:1;
+if(p.regen>0){p.hp=Math.min(p.mhp,p.hp+p.regen*heatNerf*dt/1000);}
 // Camp healing scales with rescued villagers
-if(inCamp(p.x,p.y)){p.hp=Math.min(p.mhp,p.hp+(2+G.campHealBoost)*dt/1000);}
+if(inCamp(p.x,p.y)){p.hp=Math.min(p.mhp,p.hp+(2+G.campHealBoost)*heatNerf*dt/1000);}
 G.campBroken=0;
 G.campHp=G.campMaxHp;
 while(p.xp>=p.xn){p.xp-=p.xn;p.lv++;p.xn=Math.floor(100*Math.pow(1.3,p.lv-1));p.mhp+=10;p.hp=Math.min(p.hp+25,p.mhp);p.sp+=.05;
@@ -647,7 +754,7 @@ else{p.am[l.t]+=WP[l.t].m*2;sMsg('+AMMO ('+WP[l.t].n+')','#ff0');}}
 function sMsg(t,c){G.pm={t,c};G.pmt=2000;}
 
 function dmgP(amt){const p=G.p;if(p.iv>0)return;
-const actual=amt*p.drMul*(p._lcBuff?.9:1);p.hp-=actual;p.fl=200;p.iv=200;
+const actual=amt*p.drMul*(p._lcBuff?.9:1)*(p._armorPatch>0?.85:1);p.hp-=actual;p.fl=200;p.iv=200;
 // Thorns: reflect damage to nearest enemy
 if(p.thorns>0){const ref=Math.floor(actual*p.thorns);
 let ne=null,nd=200;for(const e of G.en){const d=Math.hypot(e.x-p.x,e.y-p.y);if(d<nd){nd=d;ne=e;}}
@@ -661,7 +768,8 @@ return;}
 p.hp=0;die();}}
 
 function die(){run=0;document.getElementById('D').style.display='flex';
-document.getElementById('ds').innerHTML='WAVE: '+G.wv+'<br>KILLS: '+G.p.kl+'<br>LEVEL: '+G.p.lv+'<br>SCORE: '+G.p.sc+'<br>RITUALS: '+G.p.buffs.length+'<br>SEED: '+G.seed;}
+document.getElementById('ds').innerHTML='WAVE: '+G.wv+'<br>KILLS: '+G.p.kl+'<br>LEVEL: '+G.p.lv+'<br>SCORE: '+G.p.sc+'<br>BOSSES: '+(G._bossesKilled||0)+'<br>QUESTS: '+G.questsDone.length+'<br>CRAFTED: '+(G._craftCount||0)+'<br>RITUALS: '+G.p.buffs.length+'<br>SEED: '+G.seed;
+craftOpen=0;document.getElementById('CP').style.display='none';}
 
 function uEnemies(dt){
 const p=G.p;
@@ -734,6 +842,11 @@ G.b.splice(i,1);continue;}
 if(b.fp){for(let j=G.en.length-1;j>=0;j--){const e=G.en[j];
 if(b.hit&&b.hit[j])continue; // pierce: skip already-hit
 if(Math.hypot(b.x-e.x,b.y-e.y)<b.s+e.sz){
+// Boss shield absorbs damage
+if(e.isBoss&&e.shieldHp>0){e.shieldHp-=b.d;if(e.shieldHp<=0){e.shieldHp=0;sMsg('SHIELD BROKEN!','#4af');}
+G.dn.push({x:e.x,y:e.y-e.sz,t:b.d,li:600,c:'#4af'});
+for(let k=0;k<3;k++)G.pt.push({x:b.x,y:b.y,vx:(Math.random()-.5)*5,vy:(Math.random()-.5)*5,li:200,ml:200,c:'#4af',s:3});
+if(!p.pierce){G.b.splice(i,1);break;}continue;}
 e.hp-=b.d;e.hf=120;
 G.dn.push({x:e.x,y:e.y-e.sz,t:b.d,li:600,c:'#fff'});
 for(let k=0;k<3;k++)G.pt.push({x:b.x,y:b.y,vx:(Math.random()-.5)*5,vy:(Math.random()-.5)*5,li:200,ml:200,c:e.bc,s:3});
@@ -770,8 +883,24 @@ else{if(Math.hypot(b.x-p.x,b.y-p.y)<b.s+p.sz&&!inCamp(p.x,p.y)){dmgP(b.d);G.b.sp
 
 function killE(i){
 const e=G.en[i],p=G.p;
+// Boss shield check
+if(e.isBoss&&e.shieldHp>0)return; // can't die with shield
 p.xp+=Math.floor(e.xp*(G.xpMul||1));p.kl++;p.sc+=Math.floor(e.sc*(G.scoreMul||1));
 for(let k=0;k<15;k++){const a=k/15*PI2;G.pt.push({x:e.x,y:e.y,vx:Math.cos(a)*(2+Math.random()*4),vy:Math.sin(a)*(2+Math.random()*4),li:500,ml:500,c:e.bc,s:3+Math.random()*4});}
+// Boss death
+if(e.isBoss){
+G._bossesKilled=(G._bossesKilled||0)+1;
+G.boss=null;
+sMsg(e.nm+' DEFEATED!','#ff4');
+// Boss loot
+const bd=e.bossData;
+for(let d=0;d<bd.dropGold;d++){G.lo.push({x:e.x+(Math.random()-.5)*40,y:e.y+(Math.random()-.5)*40,t:'stone',l:'GOLD',c:'#fd0',ic:11,v:1,bo:Math.random()*PI2,fr:0});}
+for(let d=0;d<bd.dropAmmo;d++){const lt=LT[3];G.lo.push({x:e.x+(Math.random()-.5)*40,y:e.y+(Math.random()-.5)*40,t:lt.t,l:lt.l,c:lt.c,ic:lt.ic,v:lt.v,bo:Math.random()*PI2,fr:0});}
+// Big heal drop
+G.lo.push({x:e.x,y:e.y,t:'health',l:'BOSS HEART',c:'#f22',ic:2,v:80,bo:0,fr:0});
+// Massive particle explosion
+for(let k=0;k<40;k++){const a=Math.random()*PI2,s=3+Math.random()*8;G.pt.push({x:e.x,y:e.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,li:800,ml:800,c:e.ec,s:4+Math.random()*5});}
+}
 // Shrapnel: enemy explodes on death
 if(p.shrapnel){const R=80;G.ex.push({x:e.x,y:e.y,r:R,li:250,ml:250});
 for(let sj=G.en.length-1;sj>=0;sj--){if(sj===i)continue;const e2=G.en[sj];
@@ -809,14 +938,18 @@ function uWaves(dt){
 const p=G.p;
 // Cull enemies that are way too far (they'll never reach player)
 for(let i=G.en.length-1;i>=0;i--){
+if(G.en[i].isBoss)continue; // never cull bosses
 if(Math.hypot(G.en[i].x-p.x,G.en[i].y-p.y)>1800){G.en.splice(i,1);}}
+// Blood moon & horde multipliers
+const ws=WEATHERS[G.weather.state];
+const spawnMul=(ws.effect==='bloodmoon'?2:1)*(G._hordeActive?3:1);
 // Continuous spawning: maintain target enemy count near player at all times
-const targetCount=Math.min(9,2+G.wv);
-const spawnInterval=Math.max(120,500-G.wv*20);
+const targetCount=Math.min(9,2+G.wv)*spawnMul;
+const spawnInterval=Math.max(60,Math.floor((500-G.wv*20)/spawnMul));
 if(G.en.length<targetCount){G.st-=dt;
 if(G.st<=0){sEnemy();G.st=spawnInterval;}}
 // Wave advances when enough kills accumulate
-if(G.wl<=0){G.wt+=dt;if(G.wt>2000){G.wv++;sWave();}}
+if(G.wl<=0){G.wt+=dt;if(G.wt>2000){G.wv++;sWave();checkBossSpawn();}}
 }
 
 // ======= RENDERING =======
@@ -1210,7 +1343,10 @@ for(const g of G.gp){const sx=g.x-cx,sy=g.y-cy;
 X.fillStyle='#555';X.beginPath();X.arc(sx,sy,5,0,PI2);X.fill();
 X.fillStyle='#f80';X.beginPath();X.arc(sx,sy,3.5,0,PI2);X.fill();}
 // Enemies
-for(const e of G.en){const sx=e.x-cx,sy=e.y-cy;if(sx<-60||sx>W+60||sy<-60||sy>H+60)continue;drawE(e,sx,sy);}
+for(const e of G.en){const sx=e.x-cx,sy=e.y-cy;if(sx<-60||sx>W+60||sy<-60||sy>H+60)continue;
+if(G.event.cursed&&!e.isBoss){X.globalAlpha=.08;}
+drawE(e,sx,sy);
+if(G.event.cursed&&!e.isBoss)X.globalAlpha=1;}
 // Bullets
 for(const b of G.b){const sx=b.x-cx,sy=b.y-cy;X.fillStyle=b.c;X.shadowColor=b.c;X.shadowBlur=6;
 X.beginPath();X.arc(sx,sy,b.s,0,PI2);X.fill();X.globalAlpha=.3;X.beginPath();X.arc(sx-b.vx*.5,sy-b.vy*.5,b.s*.6,0,PI2);X.fill();X.globalAlpha=1;X.shadowBlur=0;}
@@ -1320,6 +1456,93 @@ X.fillText('BUILD MODE — CLICK TO PLACE WALL (1 LOG + 2 STONE)',W/2,H-70);
 X.strokeStyle='rgba(200,180,120,.4)';X.lineWidth=1;
 X.strokeRect(M.x-20,M.y-5,40,10);}
 
+// ── WEATHER VISUAL EFFECTS ──
+const ws=WEATHERS[G.weather.state];
+if(ws.effect==='fog'){
+// Dense fog: shrink vision to tight circle
+const fogR=220;
+const gd=X.createRadialGradient(W/2,H/2,fogR*.5,W/2,H/2,fogR);
+gd.addColorStop(0,'rgba(0,0,0,0)');gd.addColorStop(.6,'rgba(15,20,15,.6)');gd.addColorStop(1,'rgba(10,15,10,.95)');
+X.fillStyle=gd;X.fillRect(0,0,W,H);
+}
+if(ws.effect==='bloodmoon'){
+X.fillStyle='rgba(80,0,0,.15)';X.fillRect(0,0,W,H);
+// Red vignette
+const gd=X.createRadialGradient(W/2,H/2,W*.3,W/2,H/2,W*.7);
+gd.addColorStop(0,'rgba(0,0,0,0)');gd.addColorStop(1,'rgba(100,0,0,.2)');
+X.fillStyle=gd;X.fillRect(0,0,W,H);
+}
+if(ws.effect==='rain'){
+X.strokeStyle='rgba(100,140,180,.3)';X.lineWidth=1;
+for(const rp of G.weather.rainParts){
+X.beginPath();X.moveTo(rp.x,rp.y);X.lineTo(rp.x-4,rp.y+rp.s*4);X.stroke();}
+}
+if(ws.effect==='lightning'&&G.weather._lastStrike){
+const fl=G.weather._lastStrike.t/400;
+X.fillStyle=`rgba(200,220,255,${(fl*.3).toFixed(2)})`;X.fillRect(0,0,W,H);
+// Lightning bolt visual
+const sx=G.weather._lastStrike.x-cx,sy=G.weather._lastStrike.y-cy;
+X.strokeStyle=`rgba(150,200,255,${fl.toFixed(2)})`;X.lineWidth=3;
+X.beginPath();X.moveTo(sx,sy-300);
+let lx=sx,ly=sy-300;
+for(let s=0;s<6;s++){lx+=(Math.random()-.5)*40;ly+=50;X.lineTo(lx,ly);}
+X.lineTo(sx,sy);X.stroke();
+}
+if(ws.effect==='heatwave'){
+X.fillStyle='rgba(60,30,0,.08)';X.fillRect(0,0,W,H);
+// Heat shimmer (subtle)
+const shimmerY=Math.sin(G.t/200)*2;
+X.fillStyle='rgba(255,200,100,.03)';
+X.fillRect(0,H/2+shimmerY-20,W,40);
+}
+// ── AIRDROP VISUAL ──
+if(G.event.airdrop){
+const ad=G.event.airdrop;
+const adx=ad.x-cx,ady=ad.y-cy;
+// Parachute
+X.strokeStyle='#4e8';X.lineWidth=1;
+X.beginPath();X.arc(adx,ady-20,15,Math.PI,0);X.stroke();
+X.beginPath();X.moveTo(adx-15,ady-20);X.lineTo(adx-8,ady);X.stroke();
+X.beginPath();X.moveTo(adx+15,ady-20);X.lineTo(adx+8,ady);X.stroke();
+// Crate
+X.fillStyle='#3a5a20';X.fillRect(adx-10,ady-5,20,15);
+X.strokeStyle='#6a8a40';X.lineWidth=1;X.strokeRect(adx-10,ady-5,20,15);
+X.fillStyle='#fff';X.font='8px monospace';X.textAlign='center';X.fillText('DROP',adx,ady+5);
+// Label
+if(ad.y>=ad.gy){X.fillStyle='#4e8';X.font='10px monospace';X.fillText('[WALK OVER]',adx,ady-30);}
+}
+// ── TREASURE VISUAL ──
+if(G.event.treasure){
+const tr=G.event.treasure;
+const trx=tr.x-cx,try2=tr.y-cy;
+const bob=Math.sin(G.t/300)*3;
+X.fillStyle='rgba(253,208,0,.15)';X.beginPath();X.arc(trx,try2,30,0,PI2);X.fill();
+X.fillStyle='#fd0';X.font='16px monospace';X.textAlign='center';X.fillText('✕',trx,try2+5+bob);
+X.fillStyle='#fd0';X.font='9px monospace';X.fillText('DIG HERE',trx,try2-18);
+}
+// ── MINES VISUAL ──
+if(G._mines){for(const m of G._mines){
+const mx2=m.x-cx,my2=m.y-cy;
+X.fillStyle='rgba(255,160,0,.2)';X.beginPath();X.arc(mx2,my2,8,0,PI2);X.fill();
+X.fillStyle='#fa0';X.beginPath();X.arc(mx2,my2,4,0,PI2);X.fill();
+X.fillStyle='#a00';X.beginPath();X.arc(mx2,my2,2,0,PI2);X.fill();}}
+// ── BOSS HEALTH BAR ──
+if(G.boss&&G.boss.hp>0){
+const bx=W/2,by2=40;const bw2=300,bh2=16;
+X.fillStyle='rgba(0,0,0,.7)';X.fillRect(bx-bw2/2-2,by2-2,bw2+4,bh2+4);
+const hpPct=G.boss.hp/G.boss.mhp;
+const bc2=hpPct>.5?'#a22':hpPct>.25?'#f80':'#f44';
+X.fillStyle=bc2;X.fillRect(bx-bw2/2,by2,bw2*hpPct,bh2);
+// Shield overlay
+if(G.boss.shieldHp>0){
+X.fillStyle='rgba(80,160,255,.4)';X.fillRect(bx-bw2/2,by2,bw2*hpPct,bh2);}
+X.strokeStyle='#844';X.lineWidth=1;X.strokeRect(bx-bw2/2,by2,bw2,bh2);
+X.font='bold 11px monospace';X.fillStyle='#fff';X.textAlign='center';
+X.fillText(G.boss.nm+' — '+Math.ceil(G.boss.hp)+'/'+G.boss.mhp+(G.boss.shieldHp>0?' [SHIELD: '+Math.ceil(G.boss.shieldHp)+']':''),bx,by2+12);
+}
+// ── CURSE EFFECT (enemies invisible) ──
+// Handled: we dim enemies when cursed in drawE
+
 drawMM();uHUD();uRitualUI();
 }
 
@@ -1353,6 +1576,15 @@ X.shadowBlur=0;X.restore();
 
 function drawE(e,sx,sy){
 X.save();X.translate(sx,sy);const a=e.a,s=e.sz,fl=e.hf>0;
+// Boss aura
+if(e.isBoss){
+const pulse=.4+Math.sin(G.t/200)*.2;
+const gd=X.createRadialGradient(0,0,s,0,0,s*2.5);
+gd.addColorStop(0,`rgba(${hc(e.ec)},${pulse.toFixed(2)})`);gd.addColorStop(1,'rgba(0,0,0,0)');
+X.fillStyle=gd;X.beginPath();X.arc(0,0,s*2.5,0,PI2);X.fill();
+// Shield visual
+if(e.shieldHp>0){X.strokeStyle='rgba(80,160,255,.6)';X.lineWidth=3;
+X.beginPath();X.arc(0,0,s+8,0,PI2);X.stroke();}}
 X.fillStyle='rgba(0,0,0,.3)';X.beginPath();X.ellipse(0,s*.3,s*.8,s*.3,0,0,PI2);X.fill();
 const lc=fl?'#fff':dimC(e.bc,.7);X.fillStyle=lc;
 for(let l=0;l<e.lg;l++){const la=l/e.lg*PI2+e.wc,lx=Math.cos(la)*s*.6,ly=Math.sin(la)*s*.6;
@@ -1423,8 +1655,9 @@ X.fillRect(mx+dx*sc,my+dy*sc,Math.max(1.5,o.w*sc),Math.max(1.5,o.h*sc));}
 for(const l of G.lo){const dx=l.x-px,dy=l.y-py;if(Math.hypot(dx,dy)>viewR)continue;
 X.fillStyle=l.c;X.globalAlpha=.9;X.fillRect(mx+dx*sc-1,my+dy*sc-1,2,2);}X.globalAlpha=1;
 // Enemies
-for(const e of G.en){const dx=e.x-px,dy=e.y-py;if(Math.hypot(dx,dy)>viewR)continue;
-X.fillStyle=e.bo?'#f0a':'#f44';const sz=Math.max(2,3);X.fillRect(mx+dx*sc-sz/2,my+dy*sc-sz/2,sz,sz);}
+const eViewR=G._tracker>0?viewR*3:viewR;
+for(const e of G.en){const dx=e.x-px,dy=e.y-py;if(Math.hypot(dx,dy)>eViewR)continue;
+X.fillStyle=e.isBoss?'#ff0':e.bo?'#f0a':'#f44';const sz=e.isBoss?5:Math.max(2,3);X.fillRect(mx+dx*sc-sz/2,my+dy*sc-sz/2,sz,sz);}
 // Camp on minimap
 {const cdx=mapCx-px,cdy=mapCy-py;
 if(Math.hypot(cdx,cdy)<viewR){const cx2=mx+cdx*sc,cy2=my+cdy*sc,cr=CAMP_R*sc;
@@ -1574,7 +1807,16 @@ document.getElementById('wv').textContent='WAVE '+G.wv+' — ZONE '+(currentZone
 document.getElementById('kc').textContent='KILLS: '+p.kl+' — SCORE: '+p.sc;
 // Active buffs display
 const bf=document.getElementById('BF');
-bf.innerHTML=p.buffs.length?'<div style="color:#996;font-size:8px;letter-spacing:1px">RITUALS</div>'+p.buffs.map(b=>'<div>'+b+'</div>').join(''):'';
+let bfHtml=p.buffs.length?'<div style="color:#996;font-size:8px;letter-spacing:1px">RITUALS</div>'+p.buffs.map(b=>'<div>'+b+'</div>').join(''):'';
+// Temp buffs
+const tempBuffs=[];
+if(p._armorPatch>0)tempBuffs.push('ARMOR PATCH '+Math.ceil(p._armorPatch/1000)+'s');
+if(p._adrenaline>0)tempBuffs.push('ADRENALINE '+Math.ceil(p._adrenaline/1000)+'s');
+if(p._medStation>0)tempBuffs.push('MED STATION '+Math.ceil(p._medStation/1000)+'s');
+if(G._tracker>0)tempBuffs.push('TRACKER '+Math.ceil(G._tracker/1000)+'s');
+if(G.event.rally)tempBuffs.push('RALLY ACTIVE');
+if(tempBuffs.length)bfHtml+='<div style="color:#4af;font-size:8px;letter-spacing:1px;margin-top:4px">ACTIVE</div>'+tempBuffs.map(b=>'<div style="color:#4af">'+b+'</div>').join('');
+bf.innerHTML=bfHtml;
 const se=document.getElementById('SL');let h='';
 for(let i=0;i<p.w.length;i++){const wk2=p.w[i],wd2=WP[wk2];
 h+=`<div class="ws${i===p.cw?' a':''}"><i>${i+1}</i><div style="color:${wd2.c}">${wd2.n.slice(0,4)}</div></div>`;}
@@ -1752,9 +1994,300 @@ return;}
 requestAnimationFrame(ritualAnimLoop);
 }
 
+// ══════ WEATHER SYSTEM ══════
+function uWeather(dt){
+const w=G.weather;
+w.timer-=dt;
+if(w.timer<=0){
+// Cycle to next weather
+let next;
+do{next=Math.floor(Math.random()*WEATHERS.length);}while(next===w.state&&WEATHERS.length>1);
+w.state=next;
+const ws=WEATHERS[next];
+w.timer=ws.dur[0]+Math.random()*(ws.dur[1]-ws.dur[0]);
+if(ws.effect!=='none')sMsg(ws.name,ws.color);
+}
+const ws=WEATHERS[w.state];
+// Lightning strikes
+if(ws.effect==='lightning'){
+w.lightningT-=dt;
+if(w.lightningT<=0){
+w.lightningT=1500+Math.random()*3000;
+// Strike near a random enemy or near player
+const targets=[...G.en];
+if(targets.length>0&&Math.random()<.7){
+const t=targets[Math.random()*targets.length|0];
+const R=80;
+G.ex.push({x:t.x,y:t.y,r:R,li:300,ml:300});
+t.hp-=80;t.hf=200;
+G.dn.push({x:t.x,y:t.y-t.sz,t:80,li:600,c:'#4af'});
+if(t.hp<=0){const idx=G.en.indexOf(t);if(idx>=0)killE(idx);}
+for(let k=0;k<10;k++){const a=Math.random()*PI2;G.pt.push({x:t.x,y:t.y,vx:Math.cos(a)*5,vy:Math.sin(a)*5,li:300,ml:300,c:'#4af',s:3+Math.random()*3});}
+w._lastStrike={x:t.x,y:t.y,t:400};
+}else{
+// Strike near player (not direct hit)
+const a=Math.random()*PI2,d=80+Math.random()*200;
+const sx=G.p.x+Math.cos(a)*d,sy=G.p.y+Math.sin(a)*d;
+G.ex.push({x:sx,y:sy,r:60,li:250,ml:250});
+if(Math.hypot(G.p.x-sx,G.p.y-sy)<60)dmgP(15);
+for(let k=0;k<8;k++){const a2=Math.random()*PI2;G.pt.push({x:sx,y:sy,vx:Math.cos(a2)*4,vy:Math.sin(a2)*4,li:250,ml:250,c:'#4af',s:2+Math.random()*3});}
+w._lastStrike={x:sx,y:sy,t:400};
+}
+}
+if(w._lastStrike){w._lastStrike.t-=dt;if(w._lastStrike.t<=0)w._lastStrike=null;}
+}
+// Blood moon: double spawn rate handled in uWaves
+// Rain: slow fire rate handled in fire()
+// Heat wave: nerf regen handled in uPlayer
+// Rain particles
+if(ws.effect==='rain'){
+if(w.rainParts.length<60){
+w.rainParts.push({x:Math.random()*C.width,y:-10,s:2+Math.random()*3});}
+for(let i=w.rainParts.length-1;i>=0;i--){
+w.rainParts[i].y+=12*dt/16;w.rainParts[i].x-=2*dt/16;
+if(w.rainParts[i].y>C.height){w.rainParts[i].y=-10;w.rainParts[i].x=Math.random()*C.width;}}
+}else w.rainParts=[];
+// Update HUD
+const wxEl=document.getElementById('WX');
+if(ws.effect!=='none'){wxEl.style.display='block';wxEl.textContent=ws.name;wxEl.style.color=ws.color;}
+else wxEl.style.display='none';
+}
+
+// ══════ BOSS SYSTEM ══════
+function checkBossSpawn(){
+for(const bd of BOSSES){
+if(G.wv>=bd.wave&&!G._bossSpawned.includes(bd.wave)&&!G.boss){
+G._bossSpawned.push(bd.wave);
+spawnBoss(bd);break;}}
+}
+function spawnBoss(bd){
+const p=G.p,a=Math.random()*PI2,d=500;
+const x=p.x+Math.cos(a)*d,y=p.y+Math.sin(a)*d;
+const sf=1+(G.wv-1)*.08;
+const boss={x,y,hp:Math.floor(bd.hp*sf),mhp:Math.floor(bd.hp*sf),sp:bd.spd,
+sz:bd.sz,bc:bd.bc,ec:bd.ec,dm:Math.floor(bd.dmg*sf),xp:bd.xp,sc:bd.sc,
+nm:bd.name,a:0,at:0,sht:-1,lg:8,ar:1,bo:1,sk:1,wc:0,hf:0,
+isBoss:1,bossData:bd,phase:0,slamCd:0,summonCd:0,shieldHp:0,
+spdMul:1,dmgMul:1,aoeTimer:0};
+G.en.push(boss);
+G.boss=boss;
+sMsg('⚠ BOSS: '+bd.name+' ⚠','#f44');
+}
+function uBoss(dt){
+if(!G.boss)return;
+const b=G.boss;
+if(b.hp<=0)return; // handled in killE
+const bd=b.bossData;
+const hpPct=b.hp/b.mhp;
+// Phase transitions
+while(b.phase<bd.phases.length&&hpPct<=bd.phases[b.phase].at){
+const ph=bd.phases[b.phase];
+sMsg(ph.msg,bd.ec);
+if(ph.spdMul)b.spdMul=ph.spdMul;
+if(ph.dmgMul)b.dmgMul=ph.dmgMul;
+if(ph.shield)b.shieldHp=ph.shield;
+// Summon minions on phase change
+for(let i=0;i<3+b.phase*2;i++){
+const sa=Math.random()*PI2,sd=60+Math.random()*80;
+const ti=Math.min(2,b.phase);const t=ET[ti];const sf2=1+(G.wv-1)*.12;
+G.en.push({x:b.x+Math.cos(sa)*sd,y:b.y+Math.sin(sa)*sd,
+hp:Math.floor(t.h*sf2),mhp:Math.floor(t.h*sf2),sp:t.s*(1+(G.wv-1)*.02),
+sz:t.z,bc:t.bc,ec:t.ec,dm:Math.floor(t.d*sf2),xp:t.xp,sc:t.sc,nm:t.n,
+a:0,at:0,sht:t.sh?0:-1,lg:t.lg,ar:t.ar,bo:t.bo,sk:t.sk,wc:Math.random()*PI2,hf:0});}
+b.phase++;
+}
+// Apply speed multiplier
+b.sp=bd.spd*b.spdMul;
+// Shield absorbs damage (handled in bullet collision)
+// Slam attack
+b.slamCd-=dt;
+if(b.slamCd<=0&&Math.hypot(b.x-G.p.x,b.y-G.p.y)<150){
+const R=120+b.phase*30;
+G.ex.push({x:b.x,y:b.y,r:R,li:400,ml:400});
+if(Math.hypot(G.p.x-b.x,G.p.y-b.y)<R)dmgP(Math.floor(b.dm*.6*b.dmgMul));
+for(let k=0;k<20;k++){const a2=Math.random()*PI2;G.pt.push({x:b.x,y:b.y,vx:Math.cos(a2)*6,vy:Math.sin(a2)*6,li:400,ml:400,c:bd.bc,s:4+Math.random()*4});}
+b.slamCd=3000+Math.random()*2000;
+}
+// AOE ring attack (Archfiend)
+if(bd.abilities.includes('aoe')){
+b.aoeTimer-=dt;
+if(b.aoeTimer<=0){
+for(let r=0;r<3;r++){
+setTimeout(()=>{if(!G.boss||G.boss.hp<=0)return;
+const R=80+r*50;G.ex.push({x:b.x,y:b.y,r:R,li:300,ml:300});
+if(Math.hypot(G.p.x-b.x,G.p.y-b.y)<R)dmgP(Math.floor(b.dm*.3));
+},r*400);}
+b.aoeTimer=5000+Math.random()*3000;
+}}
+}
+
+// ══════ QUEST SYSTEM ══════
+function uQuests(){
+for(let i=G.quests.length-1;i>=0;i--){
+const qid=G.quests[i];
+const qd=QUEST_DEFS.find(q=>q.id===qid);
+if(!qd)continue;
+if(qd.check()){
+G.quests.splice(i,1);
+G.questsDone.push(qid);
+G.p.xp+=qd.xp;G.p.gold+=qd.gold;
+sMsg('QUEST COMPLETE: '+qd.desc+' (+'+qd.xp+'XP +'+qd.gold+'G)','#fd0');
+if(qd.next&&!G.quests.includes(qd.next)&&!G.questsDone.includes(qd.next)){
+G.quests.push(qd.next);}
+}}
+// Render quest log
+const ql=document.getElementById('QL');
+let html='<div class="ql-title">📋 QUESTS</div>';
+for(const qid of G.quests){
+const qd=QUEST_DEFS.find(q=>q.id===qid);
+if(!qd)continue;
+let prog='';
+if(qid.startsWith('kill')){const target=parseInt(qid.replace('kill',''));prog=' ('+Math.min(G.p.kl,target)+'/'+target+')';}
+else if(qid.startsWith('wave')){const target=parseInt(qid.replace('wave',''));prog=' ('+Math.min(G.wv,target)+'/'+target+')';}
+else if(qid==='frags')prog=' ('+G.fragCollected+'/'+G.fragTotal+')';
+else if(qid.startsWith('rescue')){const target=parseInt(qid.replace('rescue',''));prog=' ('+Math.min(G.rescuedNpcs.length,target)+'/'+target+')';}
+else if(qid.startsWith('craft')){const target=parseInt(qid.replace('craft',''));prog=' ('+Math.min(G._craftCount||0,target)+'/'+target+')';}
+html+='<div class="ql-item">'+qd.desc+'<span class="ql-prog">'+prog+'</span></div>';}
+ql.innerHTML=html;
+}
+
+// ══════ DYNAMIC EVENTS ══════
+function uEvents(dt){
+const ev=G.event;
+if(G.wv<3)return;
+// Active event countdown
+if(ev.active){
+ev.timer-=dt;
+// Horde: 3x spawn rate handled in uWaves
+// Curse: enemies invisible handled in render
+// Rally: speed buff
+if(ev.active.effect==='rally'){G.event.rally=1;}
+if(ev.timer<=0){
+// End event
+if(ev.active.effect==='rally')G.event.rally=0;
+if(ev.active.effect==='curse')G.event.cursed=0;
+if(ev.active.effect==='horde')G._hordeActive=0;
+ev.active=null;
+const evEl=document.getElementById('EV');evEl.style.display='none';
+}else{
+const evEl=document.getElementById('EV');evEl.style.display='block';
+evEl.textContent=ev.active.name+' ('+Math.ceil(ev.timer/1000)+'s)';
+evEl.style.color=ev.active.color;
+}
+}
+// Airdrop collection
+if(ev.airdrop){
+ev.airdrop.y+=2*dt/16; // falling
+if(ev.airdrop.y>=ev.airdrop.gy){ // landed
+ev.airdrop.y=ev.airdrop.gy;
+if(Math.hypot(G.p.x-ev.airdrop.x,G.p.y-ev.airdrop.y)<50){
+G.p.gr+=3;G.p.logs+=2;G.p.stone+=2;G.p.gold+=1;
+for(const w of G.p.w)if(w!=='pistol')G.p.am[w]+=WP[w].m;
+sMsg('AIRDROP COLLECTED! +SUPPLIES','#4e8');
+ev.airdrop=null;
+}}
+if(ev.airdrop&&ev.airdrop._life!==undefined){ev.airdrop._life-=dt;if(ev.airdrop._life<=0)ev.airdrop=null;}
+}
+// Treasure dig
+if(ev.treasure){
+if(Math.hypot(G.p.x-ev.treasure.x,G.p.y-ev.treasure.y)<40){
+G.p.gold+=3+Math.floor(Math.random()*3);
+sMsg('DUG UP BURIED TREASURE! +GOLD','#fd0');
+ev.treasure=null;}
+else{ev.treasure._life-=dt;if(ev.treasure._life<=0){ev.treasure=null;}}
+}
+// Mines check
+if(G._mines){for(let i=G._mines.length-1;i>=0;i--){
+const m=G._mines[i];
+for(let j=G.en.length-1;j>=0;j--){const e=G.en[j];
+if(Math.hypot(e.x-m.x,e.y-m.y)<m.r){
+G.ex.push({x:m.x,y:m.y,r:m.r,li:300,ml:300});
+for(let ej=G.en.length-1;ej>=0;ej--){const e2=G.en[ej];
+const d2=Math.hypot(e2.x-m.x,e2.y-m.y);if(d2<m.r){
+e2.hp-=Math.floor(m.dmg*(1-d2/m.r));e2.hf=120;
+if(e2.hp<=0)killE(ej);}}
+if(Math.hypot(G.p.x-m.x,G.p.y-m.y)<m.r*.5)dmgP(20);
+G._mines.splice(i,1);break;}}
+}}
+// Spawn next event
+if(!ev.active){
+ev.nextEvent-=dt;
+if(ev.nextEvent<=0){
+ev.nextEvent=20000+Math.random()*15000;
+const evDef=EVENTS[Math.floor(Math.random()*EVENTS.length)];
+triggerEvent(evDef);
+}}
+}
+function triggerEvent(evDef){
+const ev=G.event;
+sMsg(evDef.name,evDef.color);
+switch(evDef.effect){
+case'horde':
+ev.active=evDef;ev.timer=evDef.dur;G._hordeActive=1;break;
+case'airdrop':{
+const p=G.p;const a=Math.random()*PI2,d=200+Math.random()*300;
+ev.airdrop={x:p.x+Math.cos(a)*d,y:p.y+Math.sin(a)*d-500,gy:p.y+Math.sin(a)*d,_life:15000};
+ev.active=evDef;ev.timer=evDef.dur;break;}
+case'berserker':{
+const p=G.p;const a=Math.random()*PI2,d=400+Math.random()*200;
+const x=p.x+Math.cos(a)*d,y=p.y+Math.sin(a)*d;
+const sf=1+(G.wv-1)*.15;
+G.en.push({x,y,hp:Math.floor(400*sf),mhp:Math.floor(400*sf),sp:2.2,
+sz:36,bc:'#f80',ec:'#ff0',dm:Math.floor(30*sf),xp:150,sc:200,nm:'BERSERKER',
+a:0,at:0,sht:-1,lg:6,ar:0,bo:0,sk:1,wc:0,hf:0,isBerserker:1});
+break;}
+case'treasure':{
+const p=G.p;const a=Math.random()*PI2,d=100+Math.random()*200;
+ev.treasure={x:p.x+Math.cos(a)*d,y:p.y+Math.sin(a)*d,_life:20000};
+ev.active=evDef;ev.timer=evDef.dur;break;}
+case'curse':
+ev.active=evDef;ev.timer=evDef.dur;G.event.cursed=1;break;
+case'rally':
+ev.active=evDef;ev.timer=evDef.dur;break;
+}
+}
+
+// ══════ CRAFTING SYSTEM ══════
+function toggleCraft(){
+craftOpen=craftOpen?0:1;
+const cp=document.getElementById('CP');
+cp.style.display=craftOpen?'block':'none';
+if(craftOpen)updateCraftUI();
+}
+function updateCraftUI(){
+const p=G.p;
+document.getElementById('cpRes').textContent='LOG: '+p.logs+' | STONE: '+p.stone+' | GOLD: '+p.gold;
+let html='';
+for(let i=0;i<CRAFTS.length;i++){
+const c=CRAFTS[i];
+const canCraft=p.logs>=c.cost.logs&&p.stone>=c.cost.stone&&p.gold>=c.cost.gold;
+const costStr=[];
+if(c.cost.logs)costStr.push(c.cost.logs+' LOG');
+if(c.cost.stone)costStr.push(c.cost.stone+' STONE');
+if(c.cost.gold)costStr.push(c.cost.gold+' GOLD');
+html+=`<div class="cp-item"><div><div class="cp-name">${c.name}</div><div class="cp-cost">${c.desc} — ${costStr.join(' + ')}</div></div><button class="cp-btn${canCraft?'':' disabled'}" onclick="doCraft(${i})">${canCraft?'CRAFT':'—'}</button></div>`;
+}
+document.getElementById('cpList').innerHTML=html;
+}
+function doCraft(i){
+const c=CRAFTS[i],p=G.p;
+if(p.logs<c.cost.logs||p.stone<c.cost.stone||p.gold<c.cost.gold)return;
+p.logs-=c.cost.logs;p.stone-=c.cost.stone;p.gold-=c.cost.gold;
+c.effect(p);
+G._craftCount=(G._craftCount||0)+1;
+updateCraftUI();
+}
+
 function loop(ts){
 if(!run)return;const dt=Math.min(50,ts-lt);lt=ts;G.t+=dt;
 uPlayer(dt);uEnemies(dt);uBullets(dt);uGren(dt);uPart(dt);uWaves(dt);
+uWeather(dt);uBoss(dt);uQuests();uEvents(dt);
+// Temp buff timers
+const p=G.p;
+if(p._armorPatch>0){p._armorPatch-=dt;if(p._armorPatch<=0)sMsg('ARMOR PATCH EXPIRED','#666');}
+if(p._adrenaline>0){p._adrenaline-=dt;if(p._adrenaline<=0)sMsg('ADRENALINE WORE OFF','#666');}
+if(p._medStation>0){p._medStation-=dt;p.hp=Math.min(p.mhp,p.hp+5*dt/1000);if(p._medStation<=0)sMsg('MED STATION EXPIRED','#666');}
+if(G._tracker>0)G._tracker-=dt;
 G.cx=G.p.x-C.width/2;G.cy=G.p.y-C.height/2;
 render();requestAnimationFrame(loop);
 }
@@ -1766,6 +2299,7 @@ if(!seed)seed=Math.random().toString(36).substr(2,8);
 if(seedEl)seedEl.value=seed;
 document.getElementById('S').style.display='none';
 document.getElementById('D').style.display='none';
+craftOpen=0;document.getElementById('CP').style.display='none';
 init(seed);run=1;lt=performance.now();requestAnimationFrame(loop);
 }
 </script>
